@@ -1,0 +1,12 @@
+[project]
+name = "autodoc-backend"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "httpx>=0.28.1",
+    "pydantic>=2.12.5",
+    "rich>=14.3.3",
+    "typer>=0.24.1",
+]
