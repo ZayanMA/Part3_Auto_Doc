@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from autodoc.models import ChangedFile
 
 TEXT_EXTENSIONS = {
     ".py", ".js", ".jsx", ".ts", ".tsx", ".java", ".go", ".rs", ".c", ".cpp",
@@ -13,7 +14,7 @@ TEXT_EXTENSIONS = {
 EXCLUDED_DIR_NAMES = {
     ".git", ".hg", ".svn", ".venv", "venv", "__pycache__", "node_modules",
     "dist", "build", ".next", ".nuxt", ".cache", ".mypy_cache", ".pytest_cache",
-    "coverage", ".idea", ".vscode", "target", "out", "bin", "obj",
+    "coverage", ".idea", ".vscode", "target", "out", "bin", "obj", ".autodoc",
 }
 
 EXCLUDED_FILENAMES = {
@@ -37,8 +38,22 @@ def is_probably_text_file(file_path: str) -> bool:
     if path.suffix.lower() in TEXT_EXTENSIONS:
         return True
 
-    # Allow extensionless dev files like Dockerfile/Makefile
     if path.suffix == "" and path.name in {"Dockerfile", "Makefile"}:
         return True
 
     return False
+
+
+def get_all_relevant_files(repo: Path) -> list[ChangedFile]:
+    results: list[ChangedFile] = []
+
+    for path in repo.rglob("*"):
+        if not path.is_file():
+            continue
+
+        rel_path = str(path.relative_to(repo))
+
+        if is_probably_text_file(rel_path):
+            results.append(ChangedFile(path=rel_path, status="A"))
+
+    return results

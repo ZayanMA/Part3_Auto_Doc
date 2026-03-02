@@ -6,15 +6,23 @@ from autodoc.git_utils import get_file_diff, read_file_at_head
 from autodoc.models import ContextBundle
 
 
+def _read_text_file(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return path.read_text(errors="ignore")
+
+
 def _read_readme_if_present(repo: Path) -> str:
     for name in ("README.md", "README.rst", "README.txt", "readme.md"):
         p = repo / name
         if p.exists() and p.is_file():
-            try:
-                return p.read_text(encoding="utf-8")
-            except UnicodeDecodeError:
-                return p.read_text(errors="ignore")
+            return _read_text_file(p)
     return ""
+
+
+def read_repo_readme(repo: Path) -> str:
+    return _read_readme_if_present(repo)
 
 
 def _get_nearby_files(repo: Path, target_file: str, max_files: int = 3) -> tuple[list[str], list[str]]:
@@ -31,8 +39,9 @@ def _get_nearby_files(repo: Path, target_file: str, max_files: int = 3) -> tuple
             continue
         if child.name == target.name:
             continue
+
         try:
-            text = child.read_text(encoding="utf-8")
+            text = _read_text_file(child)
         except Exception:
             continue
 
@@ -46,9 +55,21 @@ def _get_nearby_files(repo: Path, target_file: str, max_files: int = 3) -> tuple
     return file_names, contents
 
 
-def build_context_bundle(repo: Path, base: str, head: str, file_path: str) -> ContextBundle:
-    target_content = read_file_at_head(repo, head, file_path)
-    diff_text = get_file_diff(repo, base, head, file_path)
+def build_context_bundle(
+    repo: Path,
+    base: str,
+    head: str,
+    file_path: str,
+    include_diff: bool = True,
+) -> ContextBundle:
+    full_path = repo / file_path
+
+    if full_path.exists():
+        target_content = _read_text_file(full_path)
+    else:
+        target_content = read_file_at_head(repo, head, file_path)
+
+    diff_text = get_file_diff(repo, base, head, file_path) if include_diff else ""
     readme_content = _read_readme_if_present(repo)
     nearby_files, nearby_contents = _get_nearby_files(repo, file_path)
 
