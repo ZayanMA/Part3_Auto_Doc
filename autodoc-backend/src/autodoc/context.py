@@ -4,6 +4,21 @@ from pathlib import Path
 
 from autodoc.git_utils import get_file_diff, read_file_at_head
 from autodoc.models import ContextBundle
+from collections import defaultdict
+
+IGNORED_DIRS = {
+    ".git", ".autodoc", "__pycache__", ".venv", "venv",
+    "node_modules", "dist", "build", ".next", "coverage"
+}
+
+IGNORED_FILE_NAMES = {
+    "__init__.py", "__main__.py"
+}
+
+HELPER_NAME_HINTS = {
+    "util", "utils", "helper", "helpers", "common", "shared", "base", "types", "constants"
+}
+
 
 
 def _read_text_file(path: Path) -> str:
@@ -81,3 +96,78 @@ def build_context_bundle(
         nearby_files=nearby_files,
         nearby_contents=nearby_contents,
     )
+
+
+def is_ignored_path(path: str) -> bool:
+    parts = Path(path).parts
+    return any(part in IGNORED_DIRS for part in parts)
+
+
+def group_key_for_file(path: str) -> str:
+    p = Path(path)
+    parts = p.parts
+
+    # Example strategy:
+    # src/auth/login.py      -> src/auth
+    # src/api/routes/user.py -> src/api
+    # auth/session.py        -> auth
+    if len(parts) >= 2:
+        return str(Path(parts[0]) / parts[1])
+    elif len(parts) == 1:
+        return parts[0]
+    return ""
+    
+
+def group_files_into_units(paths: list[str]) -> dict[str, list[str]]:
+    groups: dict[str, list[str]] = defaultdict(list)
+
+    for path in paths:
+        if is_ignored_path(path):
+            continue
+
+        key = group_key_for_file(path)
+        if not key:
+            continue
+
+        groups[key].append(path)
+
+    return dict(groups)
+
+
+def looks_like_helper_file(path: str, content: str) -> bool:
+    name = Path(path).stem.lower()
+
+    if name in HELPER_NAME_HINTS:
+        return True
+
+    if any(hint in name for hint in HELPER_NAME_HINTS):
+        return True
+
+    # crude size heuristic
+    line_count = len(content.splitlines())
+    if line_count < 20:
+        return True
+
+    return False
+
+def parent_group_key(group_key: str) -> str | None:
+    p = Path(group_key)
+    if len(p.parts) <= 1:
+        return None
+    return str(Path(*p.parts[:-1]))
+
+
+def merge_small_groups(
+    groups: dict[str, list[str]],
+    min_files: int = 3,
+) -> dict[str, list[str]]:
+    merged: dict[str, list[str]] = defaultdict(list)
+
+    for key, files in groups.items():
+        if len(files) >= min_files:
+            merged[key].extend(files)
+        else:
+            parent = parent_group_key(key)
+            merged[parent or key].extend(files)
+
+    return dict(merged)

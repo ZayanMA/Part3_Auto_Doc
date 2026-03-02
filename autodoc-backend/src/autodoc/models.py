@@ -3,6 +3,16 @@ from __future__ import annotations
 from pathlib import Path
 from pydantic import BaseModel, Field
 from typing import List, Optional
+from dataclasses import dataclass, field
+from pathlib import Path
+
+@dataclass
+class DocumentationUnit:
+    name: str                  # e.g. "Authentication"
+    slug: str                  # e.g. "authentication"
+    kind: str                  # e.g. "module", "api", "config", "overview"
+    root: str                  # e.g. "src/auth"
+    files: list[str] = field(default_factory=list)
 
 
 class ChangedFile(BaseModel):

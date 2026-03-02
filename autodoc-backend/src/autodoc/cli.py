@@ -27,14 +27,47 @@ def generate(
     limit: Optional[int] = typer.Option(None, help="Optional max number of files to process"),
     all_files: bool = typer.Option(False, "--all", help="Generate documentation for all relevant files"),
 ) -> None:
+    """
+    Generate documentation for repository files and produce a repository-level summary.
+
+    This command can operate in two modes:
+    - Incremental mode (default): generate documentation only for files changed
+      between the given Git refs.
+    - Full mode (--all): generate documentation for all relevant files in the repo.
+
+    For each candidate file, the command:
+    1. Builds a context bundle.
+    2. Constructs a prompt.
+    3. Computes a cache key.
+    4. Reuses cached output if available.
+    5. Otherwise generates and saves fresh documentation.
+
+    After per-file documentation is available, the command optionally combines
+    those file-level docs into a repository-level Markdown summary and writes it
+    to <repo>/.autodoc/REPOSITORY.md.
+
+    Args:
+        repo: Path to the target repository.
+        base: Base Git ref for incremental comparison.
+        head: Head Git ref for incremental comparison.
+        model: Model identifier used for documentation generation.
+        limit: Optional maximum number of files to process.
+        all_files: If True, process all relevant files instead of only changed ones.
+
+    Raises:
+        typer.Exit: Exits with code 1 for fatal setup/file gathering errors,
+        or code 0 when there is simply nothing to process.
+    """
     repo_path = Path(repo).resolve()
 
+    # Ensure the target path is a valid Git repository before doing anything else.
     try:
         ensure_git_repo(repo_path)
     except GitCommandError as e:
         console.print(f"[red]Git error:[/red] {e}")
         raise typer.Exit(code=1)
 
+    # Gather either all relevant files or only changed relevant files.
     try:
         if all_files:
             candidates = get_all_relevant_files(repo_path)
@@ -48,6 +81,7 @@ def generate(
         console.print(f"[red]Failed to gather files:[/red] {e}")
         raise typer.Exit(code=1)
 
+    # Optionally restrict the number of files processed for testing/cost control.
     if limit is not None:
         candidates = candidates[:limit]
 
@@ -55,6 +89,7 @@ def generate(
         console.print("[yellow]No relevant files found.[/yellow]")
         raise typer.Exit(code=0)
 
+    # Create a summary table for terminal output.
     summary = Table(title="Autodoc Generation Summary")
     summary.add_column("File")
     summary.add_column("Status")
@@ -64,10 +99,12 @@ def generate(
     cached_count = 0
     failed_count = 0
 
+    # Store (source file path, generated markdown path) for repo-level documentation later.
     per_file_markdown_paths: List[Tuple[str, Path]] = []
 
     for item in candidates:
         try:
+            # Build the full context required for generating documentation.
             bundle = build_context_bundle(
                 repo_path,
                 base,
@@ -77,6 +114,7 @@ def generate(
             )
             prompt_text = build_prompt(bundle)
 
+            # Compute a deterministic cache key based on the generation inputs.
             cache_key = compute_cache_key(
                 target_file=item.path,
                 prompt_text=prompt_text,
@@ -84,6 +122,7 @@ def generate(
                 prompt_version=PROMPT_VERSION,
             )
 
+            # Reuse cached documentation if it already exists.
             if cache_exists(repo_path, cache_key):
                 md_path, _ = get_cache_paths(repo_path, cache_key)
                 summary.add_row(item.path, "cached", str(md_path))
@@ -91,6 +130,7 @@ def generate(
                 per_file_markdown_paths.append((item.path, md_path))
                 continue
 
+            # Generate fresh documentation if no cached entry exists.
             markdown = generate_documentation(prompt_text, item.path)
             md_path, _ = save_cache_entry(
                 repo=repo_path,
@@ -108,6 +148,7 @@ def generate(
             per_file_markdown_paths.append((item.path, md_path))
 
         except Exception as e:
+            # Record per-file failure without killing the whole run.
             summary.add_row(item.path, "failed", str(e))
             failed_count += 1
 
@@ -124,7 +165,7 @@ def generate(
             except Exception:
                 continue
 
-            # Optionally truncate very large per-file docs to keep the prompt bounded.
+            # Truncate very large file docs to keep the repository prompt bounded.
             max_chars = 4000
             if len(content) > max_chars:
                 content = content[:max_chars] + "\n\n...[truncated]...\n"
@@ -132,6 +173,7 @@ def generate(
             file_docs.append((path_str, content))
 
         if file_docs:
+            # Build and generate the repository-level documentation.
             repo_prompt = build_repo_prompt(
                 repo_name=repo_path.name,
                 readme_content=repo_readme,
@@ -139,6 +181,7 @@ def generate(
             )
             repo_markdown = generate_repo_documentation(repo_prompt)
 
+            # Save repository-level documentation to the .autodoc directory.
             repo_doc_dir = repo_path / AUTODOC_DIR
             repo_doc_dir.mkdir(parents=True, exist_ok=True)
             repo_doc_path = repo_doc_dir / "REPOSITORY.md"
