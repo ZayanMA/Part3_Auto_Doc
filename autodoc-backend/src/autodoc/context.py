@@ -5,10 +5,12 @@ from pathlib import Path
 from autodoc.git_utils import get_file_diff, read_file_at_head
 from autodoc.models import ContextBundle
 from collections import defaultdict
+from autodoc.models import DocumentationUnit, UnitContextBundle
 
 IGNORED_DIRS = {
     ".git", ".autodoc", "__pycache__", ".venv", "venv",
-    "node_modules", "dist", "build", ".next", "coverage"
+    "node_modules", "dist", "build", ".next", "coverage",
+    ".github", ".devcontainer"
 }
 
 IGNORED_FILE_NAMES = {
@@ -106,16 +108,18 @@ def is_ignored_path(path: str) -> bool:
 def group_key_for_file(path: str) -> str:
     p = Path(path)
     parts = p.parts
-
-    # Example strategy:
-    # src/auth/login.py      -> src/auth
-    # src/api/routes/user.py -> src/api
-    # auth/session.py        -> auth
-    if len(parts) >= 2:
+    
+    # special-case "src/<pkg>" as a strong module boundary
+    if len(parts) >= 2 and parts[0] == "src":
         return str(Path(parts[0]) / parts[1])
-    elif len(parts) == 1:
-        return parts[0]
-    return ""
+    
+    # top-level files -> "root"
+    if len(parts) == 1:
+        return "root"
+
+    # otherwise return first two parts
+    
+    return str(Path(parts[0]) / parts[1])
     
 
 def group_files_into_units(paths: list[str]) -> dict[str, list[str]]:
@@ -171,3 +175,82 @@ def merge_small_groups(
             merged[parent or key].extend(files)
 
     return dict(merged)
+
+def title_from_group_key(group_key: str) -> str:
+    last = Path(group_key).name
+    return last.replace("_", " ").replace("-", " ").title()
+
+def slug_from_group_key(group_key: str) -> str:
+    # stable filename-safe slug
+    return group_key.replace("/", "__").replace("\\", "__")
+
+def make_units_from_groups(groups: dict[str, list[str]]) -> list[DocumentationUnit]:
+    units: list[DocumentationUnit] = []
+    for root, files in sorted(groups.items(), key=lambda kv: kv[0]):
+        units.append(
+            DocumentationUnit(
+                name=title_from_group_key(root),
+                slug=slug_from_group_key(root),
+                kind="module",
+                root=root,
+                files=sorted(files),
+            )
+        )
+    return units
+
+def build_unit_context_bundle(
+    repo: Path,
+    base: str,
+    head: str,
+    unit: DocumentationUnit,
+    include_diff: bool = True,
+    max_file_chars: int = 6000,
+    max_files_fulltext: int = 8,
+    ) -> UnitContextBundle:
+    readme_context = _read_readme_if_present(repo)
+
+    # Read contents for all files (but we may truncate / limit)
+    raw_contents: list[tuple[str, str]] = []
+    diffs: list[tuple[str, str]] = []
+
+    for file_path in unit.files:
+        full_path = repo / file_path
+        if full_path.exists():
+            content = _read_text_file(full_path)
+        else:
+            content = read_file_at_head(repo, head, file_path)
+        
+        # Truncate big files to keep prompts bounded
+
+        if len(content) > max_file_chars:
+            content = content[:max_file_chars] + "\n\n...[truncated]...\n"
+
+        raw_contents.append((file_path, content))
+
+        if include_diff:
+            diff_text = get_file_diff(repo, base, head, file_path)
+            if diff_text.strip():
+                diffs.append((file_path, diff_text))
+
+    # Supress tiny/helper files from being "front and centre"
+    # Keep them available, but we'll push them to the end and possibly limit full-text inclusion.
+    def sort_key(item: tuple[str, str]) -> tuple[int, int]:
+        path, content = item
+        helper = looks_like_helper_file(path, content)
+        # non-helper first, then longer files first
+        return (1 if helper else 0, -len(content))
+
+    sorted_contents = sorted(raw_contents, key=sort_key)
+
+    included_contents = sorted_contents[:max_files_fulltext]
+
+    return UnitContextBundle(
+        unit_name=unit.name,
+        unit_slug=unit.slug,
+        unit_kind=unit.kind,
+        unit_root=unit.root,
+        readme_content=readme_context,
+        files=unit.files,
+        file_contents=included_contents,
+        diffs=diffs,
+    )

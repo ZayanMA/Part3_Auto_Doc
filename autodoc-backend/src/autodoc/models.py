@@ -6,6 +6,22 @@ from typing import List, Optional
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from dataclasses import dataclass
+from typing import List, Tuple
+
+@dataclass
+class UnitContextBundle:
+    unit_name: str
+    unit_slug: str
+    unit_kind: str
+    unit_root: str
+    readme_content: str
+    files: List[str]
+    # (path, content)
+    file_contents: List[Tuple[str, str]]
+    # (path, diff)
+    diffs: List[Tuple[str, str]]
+
 @dataclass
 class DocumentationUnit:
     name: str                  # e.g. "Authentication"

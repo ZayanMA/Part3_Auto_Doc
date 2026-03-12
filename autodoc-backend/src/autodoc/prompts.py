@@ -70,3 +70,47 @@ Existing repository README (if any):
 Per-file documentation inputs:
 {files_text}
 """.strip()
+
+
+def build_unit_prompt(bundle) -> str:
+    files_list = "\n".join(f"- {p}" for p in bundle.files)
+
+    diffs_text = ""
+    if bundle.diffs:
+        diffs_text = "\n".join(
+            [f"\n--- DIFF: {p} ---\n{d}\n" for (p, d) in bundle.diffs]
+        )
+
+    contents_text = "\n".join(
+        [f"\n--- FILE: {p} ---\n{c}\n" for (p, c) in bundle.file_contents]
+    )
+
+    return f"""
+You are generating technical documentation for a source code repository.
+
+Task:
+Generate a single Markdown page documenting this *module/unit*.
+
+Unit:
+- Name: {bundle.unit_name}
+- Root: {bundle.unit_root}
+- Files in unit:
+{files_list}
+
+Rules:
+- Write documentation for the unit as a whole (responsibilities, how it fits in, key flows).
+- Do NOT create a section per file by default.
+- Mention helper/tiny files only if they matter; avoid noise.
+- Be explicit about inputs/outputs, side effects, and key dependencies.
+- Do not invent APIs or behaviour not supported by the provided context.
+- If information is missing, say so.
+
+Repository README:
+{bundle.readme_content}
+
+Relevant diffs (optional):
+{diffs_text}
+
+Selected unit file contents:
+{contents_text}
+""".strip()
