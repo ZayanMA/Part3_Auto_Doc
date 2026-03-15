@@ -1,4 +1,4 @@
-PROMPT_VERSION = "v3"
+PROMPT_VERSION = "v4"
 
 
 def build_unit_prompt(bundle) -> str:
@@ -27,7 +27,11 @@ def build_unit_prompt(bundle) -> str:
 
     existing_doc_text = (getattr(bundle, "existing_unit_doc", "") or "").strip() or "(none yet)"
 
-    return f"""You are maintaining technical documentation for a codebase.
+    return f"""Before writing, silently reason through:
+1. What is the primary responsibility of this unit?
+2. What are the 2–3 most important public interfaces?
+3. What does this unit NOT do (boundaries)?
+Then write the documentation. Do not include your reasoning in the output.
 
 ## 1. Unit Identity
 - **Name**: {bundle.unit_name}
@@ -52,11 +56,21 @@ def build_unit_prompt(bundle) -> str:
 {existing_doc_text}
 
 ## 7. Instructions
-- Output Markdown only.
+- Use ONLY the following required sections (H2 headings):
+  ## Overview
+  ## Responsibilities
+  ## Key APIs & Interfaces
+  ## Configuration & Data
+  ## Dependencies
+  ## Usage Notes
+- Only mention functions, classes, parameters, or behaviours that appear verbatim in the code above.
+- For each API or interface listed, cite the file it comes from (e.g. `cache.py`).
+- If a section has nothing to say, write "N/A" rather than omitting the heading.
+- Do not add sections beyond those listed above.
+- Prefer bullet points within sections over dense paragraphs.
+- Do not repeat the unit name or file list in the output body.
 - DO NOT invent APIs or behaviour not supported by the code/diffs.
 - Prefer updating the existing doc rather than rewriting from scratch.
-- Structure: Overview, Responsibilities, Key APIs/Interfaces, Data/Config, Dependency notes, How it fits in.
-- Do NOT add a section per file unless it truly helps. Summarize at unit level.
 """.strip()
 
 
@@ -77,9 +91,11 @@ def build_unit_patch_prompt(bundle) -> str:
 {existing_doc_text}
 
 ## Instructions
-- Return the COMPLETE updated Markdown document.
-- Make minimal changes — only update sections affected by the diffs.
-- DO NOT invent APIs or behaviour not shown in the diffs.
+- Return the COMPLETE updated Markdown document with ALL sections intact.
+- Only change the content of sections that are DIRECTLY affected by the diff above.
+- Copy all other sections from the existing documentation unchanged, word for word.
+- Do NOT remove, rename, or reorder any existing H2 sections.
+- Do NOT invent APIs or behaviour not shown in the diff.
 - Output Markdown only.
 """.strip()
 
@@ -95,18 +111,24 @@ def build_repo_prompt(
 
     units_text = "\n".join(unit_sections)
 
-    return f"""
-You are generating high-level technical documentation for the source code repository "{repo_name}".
+    return f"""Write a repository overview for "{repo_name}" with these required sections:
 
-Task:
-Produce a single, cohesive Markdown document that explains the repository at a repository-wide level.
+## What This Does
+(2–3 sentences: purpose and problem solved)
 
-Rules:
-- Focus on the overall purpose of the repository and how its main parts fit together.
-- Use the unit documentation as input, but avoid repeating it verbatim; instead, synthesize and summarize.
-- Highlight key modules, important responsibilities, and how a new contributor should navigate the codebase.
-- If the information is incomplete, clearly state any limitations instead of hallucinating details.
-- Return Markdown only.
+## Architecture Overview
+(How the main components fit together — reference component names from the unit docs)
+
+## Key Entry Points
+(How to start using or running this system — CLI commands, API endpoints, scripts)
+
+## Component Map
+(Brief one-line description of each major component)
+
+## Getting Started
+(Minimal steps for a new contributor to run locally)
+
+Do not repeat unit documentation verbatim. Synthesise and connect.
 
 Existing repository README (if any):
 {readme_content}

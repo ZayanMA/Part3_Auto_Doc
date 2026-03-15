@@ -104,7 +104,14 @@ def generate_documentation(
     payload = {
         "model": model,
         "messages": [
-            {"role": "system", "content": "You are a precise technical documentation writer. Output Markdown only."},
+            {"role": "system", "content": (
+                "You are an expert technical documentation engineer. Your job is to write accurate, grounded documentation from source code.\n\n"
+                "Rules:\n"
+                "- Output Markdown only. No preamble, no apologies, no meta-commentary.\n"
+                "- Only describe behaviour that is EXPLICITLY present in the provided code. Never invent APIs, parameters, or behaviours.\n"
+                "- Every claim about the code must be traceable to a specific file or diff shown to you.\n"
+                "- If the code is ambiguous or incomplete, say so explicitly rather than guessing."
+            )},
             {"role": "user", "content": prompt_text},
         ],
         "temperature": 0.2,
@@ -123,7 +130,11 @@ def generate_repo_documentation(prompt_text: str, *, model: Optional[str] = None
     payload = {
         "model": model,
         "messages": [
-            {"role": "system", "content": "You write high-level repository documentation. Output Markdown only."},
+            {"role": "system", "content": (
+                "You are a senior software architect writing onboarding documentation.\n"
+                "Output Markdown only. Synthesise the unit docs into a high-level overview — do not repeat them verbatim.\n"
+                "Focus on: purpose, architecture, key entry points, and how a new contributor navigates the codebase."
+            )},
             {"role": "user", "content": prompt_text},
         ],
         "temperature": 0.2,

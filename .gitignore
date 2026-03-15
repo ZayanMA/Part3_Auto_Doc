@@ -1,2 +1,10 @@
 test_repo/
 *.env
+.env
+.env.*
+.env.local
+.env.*.local
+secrets/
+credentials/
+*.pem
+*.key

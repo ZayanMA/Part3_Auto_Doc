@@ -431,7 +431,7 @@ def gather_neighbour_summaries(
         doc_path = repo / AUTODOC_DIR / "units" / f"{neighbour.slug}.md"
         if doc_path.exists():
             try:
-                snippet = doc_path.read_text(encoding="utf-8")[:200]
+                snippet = doc_path.read_text(encoding="utf-8")[:500]
                 summaries.append((neighbour.name, snippet))
             except Exception:
                 pass
