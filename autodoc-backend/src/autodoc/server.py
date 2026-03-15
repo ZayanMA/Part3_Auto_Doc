@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
+import tempfile
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -41,7 +44,8 @@ class JobStatus(str, Enum):
 
 
 class GenerateRequest(BaseModel):
-    repo_path: str
+    repo_full_name: str          # "owner/repo" — cloned by the server
+    github_token: str            # GitHub token used to clone (never logged)
     base: str = "HEAD~1"
     head: str = "HEAD"
     model: Optional[str] = None
@@ -83,6 +87,7 @@ def _set_job(job_id: str, **kwargs) -> None:
 def run_generate_job(job_id: str, req: GenerateRequest) -> None:
     _set_job(job_id, status=JobStatus.RUNNING)
 
+    tmpdir: Optional[str] = None
     try:
         from pathlib import Path
         from autodoc.cache import AUTODOC_DIR, cache_exists, compute_cache_key, get_cache_paths, save_cache_entry, prune_cache, append_changelog_entry
@@ -99,7 +104,21 @@ def run_generate_job(job_id: str, req: GenerateRequest) -> None:
         from autodoc.prompts import build_repo_prompt, build_unit_prompt, build_unit_patch_prompt
         from autodoc.router import route_model
 
-        repo_path = Path(req.repo_path).resolve()
+        # Clone the target repo into a temporary directory
+        tmpdir = tempfile.mkdtemp(prefix="autodoc_")
+        clone_url = f"https://x-access-token:{req.github_token}@github.com/{req.repo_full_name}.git"
+        try:
+            subprocess.run(
+                ["git", "clone", clone_url, tmpdir],
+                check=True, capture_output=True, text=True,
+            )
+        except subprocess.CalledProcessError as exc:
+            # Avoid leaking the token in the error message
+            raise RuntimeError(
+                f"Failed to clone {req.repo_full_name} (git exit {exc.returncode})"
+            ) from None
+
+        repo_path = Path(tmpdir)
 
         cfg_file = Path(req.config_path) if req.config_path else None
         cfg = load_config(repo_path, cfg_file)
@@ -261,6 +280,9 @@ def run_generate_job(job_id: str, req: GenerateRequest) -> None:
 
     except Exception as e:
         _set_job(job_id, status=JobStatus.FAILED, finished_at=_utc_now(), error=str(e))
+    finally:
+        if tmpdir:
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 # ─── Endpoints ────────────────────────────────────────────────────────────────
