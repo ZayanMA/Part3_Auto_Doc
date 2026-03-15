@@ -197,6 +197,37 @@ def _resolve_relative_import(current_module: str, import_str: str) -> Optional[s
     return ".".join(base_parts)
 
 
+def _resolve_imports_fuzzy(
+    raw_imports: List[str],
+    current_file: str,
+    all_files_set: Set[str],
+) -> List[str]:
+    """
+    Fuzzy resolver for non-Python files.
+    Matches import strings against repo files by stem or suffix-stripped path component.
+    """
+    resolved: List[str] = []
+    for imp in raw_imports:
+        # Strip leading ./ or ../
+        imp_clean = imp.lstrip("./").replace("/", Path.cwd().name)  # normalize separators
+        imp_stem = Path(imp).stem  # e.g. "utils" from "./utils"
+        imp_name = Path(imp).name  # e.g. "utils.ts"
+
+        for candidate in all_files_set:
+            if candidate == current_file:
+                continue
+            cand_path = Path(candidate)
+            # Direct stem match
+            if cand_path.stem == imp_stem or cand_path.name == imp_name:
+                resolved.append(candidate)
+                break
+            # Suffix-agnostic: if imp ends in a known extension, match exactly
+            if candidate.endswith(imp) or candidate.endswith(imp + cand_path.suffix):
+                resolved.append(candidate)
+                break
+    return resolved
+
+
 def build_import_graph(repo: Path, all_files: List[str]) -> Tuple[Dict[str, List[str]], Dict[str, List[str]]]:
     """
     Returns:
@@ -215,34 +246,45 @@ def build_import_graph(repo: Path, all_files: List[str]) -> Tuple[Dict[str, List
     raw_imports_by_file: Dict[str, List[str]] = {}
     resolved: Dict[str, List[str]] = {}
 
+    all_files_set = set(all_files)
+
     for f in all_files:
         p = repo / f
-        if p.suffix != ".py" or not p.exists():
+        if not p.exists():
             raw_imports_by_file[f] = []
             resolved[f] = []
             continue
 
         src = read_text_best_effort(p)
-        raw = _parse_python_imports(src)
+
+        if p.suffix == ".py":
+            raw = _parse_python_imports(src)
+        else:
+            from autodoc.lang_extractors import extract_imports_for_file
+            raw = extract_imports_for_file(f, src)
+
         raw_imports_by_file[f] = raw
 
-        cur_mod = file_to_module.get(f, "")
-        deps: List[str] = []
+        if p.suffix == ".py":
+            cur_mod = file_to_module.get(f, "")
+            deps: List[str] = []
 
-        for imp in raw:
-            imp_mod = _resolve_relative_import(cur_mod, imp) if cur_mod else imp
-            if not imp_mod:
-                continue
+            for imp in raw:
+                imp_mod = _resolve_relative_import(cur_mod, imp) if cur_mod else imp
+                if not imp_mod:
+                    continue
 
-            # Try progressively shorter prefixes: a.b.c -> a.b.c, a.b, a
-            cand = imp_mod
-            while cand:
-                if cand in module_to_file:
-                    deps.append(module_to_file[cand])
-                    break
-                if "." not in cand:
-                    break
-                cand = cand.rsplit(".", 1)[0]
+                # Try progressively shorter prefixes: a.b.c -> a.b.c, a.b, a
+                cand = imp_mod
+                while cand:
+                    if cand in module_to_file:
+                        deps.append(module_to_file[cand])
+                        break
+                    if "." not in cand:
+                        break
+                    cand = cand.rsplit(".", 1)[0]
+        else:
+            deps = _resolve_imports_fuzzy(raw, f, all_files_set)
 
         # de-dupe
         seen = set()

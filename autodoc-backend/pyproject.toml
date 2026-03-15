@@ -10,10 +10,13 @@ dependencies = [
     "python-dotenv>=1.2.2",
     "rich>=14.3.3",
     "typer>=0.24.1",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.34.0",
 ]
 
 [project.scripts]
 autodoc = "autodoc.cli:app"
+autodoc-server = "autodoc.server:main"
 
 [build-system]
 requires = ["hatchling"]

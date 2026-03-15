@@ -4,10 +4,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 from typing import List, Optional
 from dataclasses import dataclass, field
-from pathlib import Path
 
-from dataclasses import dataclass
-from typing import List, Tuple
 
 @dataclass
 class UnitContextBundle:
@@ -16,18 +13,27 @@ class UnitContextBundle:
     unit_kind: str
     unit_root: str
     readme_content: str
+    existing_unit_doc: str
     files: List[str]
-    # (path, content)
-    file_contents: List[Tuple[str, str]]
-    # (path, diff)
-    diffs: List[Tuple[str, str]]
+    file_contents: List[tuple[str, str]]   # selected fulltext
+    diffs: List[tuple[str, str]]           # only changed files
+    neighbour_summaries: List[tuple[str, str]] = field(default_factory=list)
+
+
+@dataclass
+class GenerationUsage:
+    model: str
+    prompt_tokens: int
+    completion_tokens: int
+    estimated_cost_usd: float
+
 
 @dataclass
 class DocumentationUnit:
-    name: str                  # e.g. "Authentication"
-    slug: str                  # e.g. "authentication"
-    kind: str                  # e.g. "module", "api", "config", "overview"
-    root: str                  # e.g. "src/auth"
+    name: str
+    slug: str
+    kind: str
+    root: str
     files: list[str] = field(default_factory=list)
 
 
@@ -55,6 +61,12 @@ class CacheMetadata(BaseModel):
     generated_at_utc: str
     base_ref: str
     head_ref: str
+    mode: str = "full"
+    routing_reason: str = ""
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    estimated_cost_usd: float = 0.0
+    last_accessed_utc: str = ""
 
 
 class GenerationResult(BaseModel):

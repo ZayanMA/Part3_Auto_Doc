@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from autodoc.models import ChangedFile
+import subprocess
 
 TEXT_EXTENSIONS = {
     ".py", ".js", ".jsx", ".ts", ".tsx", ".java", ".go", ".rs", ".c", ".cpp",
@@ -57,3 +58,26 @@ def get_all_relevant_files(repo: Path) -> list[ChangedFile]:
             results.append(ChangedFile(path=rel_path, status="A"))
 
     return results
+
+
+def get_all_relevant_files_git(repo: Path) -> list[ChangedFile]:
+    """Use git ls-files to respect .gitignore; falls back to rglob."""
+    try:
+        result = subprocess.run(
+            ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
+            cwd=str(repo),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode != 0:
+            return get_all_relevant_files(repo)
+
+        files = []
+        for line in result.stdout.splitlines():
+            line = line.strip()
+            if line and is_probably_text_file(line):
+                files.append(ChangedFile(path=line, status="A"))
+        return files if files else get_all_relevant_files(repo)
+    except Exception:
+        return get_all_relevant_files(repo)

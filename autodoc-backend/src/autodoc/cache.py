@@ -8,27 +8,11 @@ from pathlib import Path
 from autodoc.models import CacheMetadata
 
 
-# Root folder inside the target repository used by this tool.
 AUTODOC_DIR = ".autodoc"
-
-# Subdirectory where cached documentation artifacts are stored.
 CACHE_DIR = "cache"
 
 
 def ensure_cache_dirs(repo: Path) -> Path:
-    """
-    Ensure the cache directory exists inside the target repository.
-
-    Args:
-        repo: Path to the target repository root.
-
-    Returns:
-        Path to the cache directory, e.g. <repo>/.autodoc/cache.
-
-    Notes:
-        - Creates parent directories if they do not already exist.
-        - Does not fail if the directory is already present.
-    """
     cache_root = repo / AUTODOC_DIR / CACHE_DIR
     cache_root.mkdir(parents=True, exist_ok=True)
     return cache_root
@@ -41,46 +25,39 @@ def compute_cache_key(
     model_name: str,
     prompt_version: str,
 ) -> str:
-    """
-    Compute a deterministic cache key for a documentation generation request.
+    material = "\n".join([
+        f"target_file={target_file}",
+        f"model_name={model_name}",
+        f"prompt_version={prompt_version}",
+        prompt_text,
+    ])
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
-    The cache key is derived from the key inputs that affect generated output.
-    If any of these inputs change, the resulting hash changes too, which forces
-    regeneration instead of reusing stale cached documentation.
 
-    Args:
-        target_file: Path of the source file being documented.
-        prompt_text: Full prompt sent to the LLM.
-        model_name: Name/identifier of the model used for generation.
-        prompt_version: Version string for the prompt template.
-
-    Returns:
-        A SHA-256 hex digest string that uniquely identifies this generation input.
-    """
-    material = "\n".join(
-        [
-            f"target_file={target_file}",
-            f"model_name={model_name}",
-            f"prompt_version={prompt_version}",
-            prompt_text,
-        ]
+def compute_incremental_cache_key(
+    unit_slug: str,
+    changed_files_content: dict[str, str],
+    existing_doc: str,
+    model_name: str,
+    prompt_version: str,
+) -> str:
+    """Cache key for patch mode — hashes only changed files + existing doc."""
+    sorted_hashes = sorted(
+        f"{path}:{hashlib.sha256(content.encode()).hexdigest()}"
+        for path, content in changed_files_content.items()
     )
+    existing_hash = hashlib.sha256(existing_doc.encode()).hexdigest()
+    material = "\n".join([
+        f"unit_slug={unit_slug}",
+        f"model_name={model_name}",
+        f"prompt_version={prompt_version}",
+        f"existing_doc={existing_hash}",
+        *sorted_hashes,
+    ])
     return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
 
 def get_cache_paths(repo: Path, cache_key: str) -> tuple[Path, Path]:
-    """
-    Get the output file paths for a given cache key.
-
-    Args:
-        repo: Path to the target repository root.
-        cache_key: Unique hash key for the generation request.
-
-    Returns:
-        A tuple of:
-        - markdown path (<cache_key>.md)
-        - metadata path (<cache_key>.json)
-    """
     cache_root = ensure_cache_dirs(repo)
     md_path = cache_root / f"{cache_key}.md"
     meta_path = cache_root / f"{cache_key}.json"
@@ -88,19 +65,6 @@ def get_cache_paths(repo: Path, cache_key: str) -> tuple[Path, Path]:
 
 
 def cache_exists(repo: Path, cache_key: str) -> bool:
-    """
-    Check whether a complete cached documentation entry already exists.
-
-    A cache entry is considered valid only if both the generated Markdown file
-    and the corresponding metadata JSON file are present.
-
-    Args:
-        repo: Path to the target repository root.
-        cache_key: Unique hash key for the generation request.
-
-    Returns:
-        True if both cache files exist, otherwise False.
-    """
     md_path, meta_path = get_cache_paths(repo, cache_key)
     return md_path.exists() and meta_path.exists()
 
@@ -115,35 +79,17 @@ def save_cache_entry(
     prompt_version: str,
     base_ref: str,
     head_ref: str,
+    mode: str = "full",
+    routing_reason: str = "",
+    prompt_tokens: int = 0,
+    completion_tokens: int = 0,
+    estimated_cost_usd: float = 0.0,
 ) -> tuple[Path, Path]:
-    """
-    Save generated documentation and its metadata to the local cache.
-
-    This writes:
-    - the generated Markdown documentation
-    - a JSON metadata file describing how and when it was produced
-
-    Args:
-        repo: Path to the target repository root.
-        cache_key: Unique hash key for the generation request.
-        markdown: Generated Markdown documentation content.
-        source_file: Source file for which documentation was generated.
-        model_name: Name/identifier of the model used for generation.
-        prompt_version: Version string for the prompt template.
-        base_ref: Base Git ref used for the change comparison.
-        head_ref: Head Git ref used for the change comparison.
-
-    Returns:
-        A tuple of:
-        - path to the saved Markdown file
-        - path to the saved metadata JSON file
-    """
     md_path, meta_path = get_cache_paths(repo, cache_key)
 
-    # Save the generated Markdown documentation.
     md_path.write_text(markdown, encoding="utf-8")
 
-    # Build a structured metadata record for traceability and reuse.
+    now = datetime.now(timezone.utc).isoformat()
     metadata = CacheMetadata(
         source_file=source_file,
         cache_key=cache_key,
@@ -151,15 +97,64 @@ def save_cache_entry(
         output_metadata_path=str(meta_path),
         model_name=model_name,
         prompt_version=prompt_version,
-        generated_at_utc=datetime.now(timezone.utc).isoformat(),
+        generated_at_utc=now,
         base_ref=base_ref,
         head_ref=head_ref,
+        mode=mode,
+        routing_reason=routing_reason,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        estimated_cost_usd=estimated_cost_usd,
+        last_accessed_utc=now,
     )
 
-    # Save metadata alongside the Markdown output as formatted JSON.
     meta_path.write_text(
         json.dumps(metadata.model_dump(), indent=2),
         encoding="utf-8",
     )
 
     return md_path, meta_path
+
+
+def prune_cache(repo: Path, max_age_days: int) -> int:
+    """Delete cache entries older than max_age_days. Returns count deleted."""
+    cache_root = repo / AUTODOC_DIR / CACHE_DIR
+    if not cache_root.exists():
+        return 0
+
+    now = datetime.now(timezone.utc)
+    deleted = 0
+
+    for meta_file in cache_root.glob("*.json"):
+        try:
+            data = json.loads(meta_file.read_text(encoding="utf-8"))
+            generated_at = datetime.fromisoformat(data.get("generated_at_utc", ""))
+            age_days = (now - generated_at).days
+            if age_days > max_age_days:
+                md_file = meta_file.with_suffix(".md")
+                meta_file.unlink(missing_ok=True)
+                md_file.unlink(missing_ok=True)
+                deleted += 1
+        except Exception:
+            continue
+
+    return deleted
+
+
+def append_changelog_entry(
+    doc_path: Path,
+    mode: str,
+    model: str,
+    base_ref: str,
+    head_ref: str,
+) -> None:
+    """Append an HTML comment changelog entry to a stable doc file."""
+    if not doc_path.exists():
+        return
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    entry = f"\n<!-- autodoc: {now} mode={mode} model={model} base={base_ref} head={head_ref} -->\n"
+    try:
+        with open(doc_path, "a", encoding="utf-8") as f:
+            f.write(entry)
+    except Exception:
+        pass

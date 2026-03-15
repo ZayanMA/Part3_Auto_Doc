@@ -1,0 +1,117 @@
+name: AutoDoc Generate and Push
+
+on:
+  workflow_call:
+    inputs:
+      confluence_space_key:
+        required: true
+        type: string
+        description: "Confluence space key (e.g. AU)"
+      jira_issue_key:
+        required: false
+        type: string
+        default: ""
+        description: "Jira issue key (e.g. AU-42). If empty, auto-detected from PR body."
+      repo_path:
+        required: false
+        type: string
+        default: "."
+        description: "Path to the repository root within the workspace"
+      autodoc_version:
+        required: false
+        type: string
+        default: "main"
+        description: "Branch/tag of autodoc-backend to install"
+    secrets:
+      OPENROUTER_API_KEY:
+        required: true
+      AUTODOC_WEBHOOK_URL:
+        required: true
+      AUTODOC_WEBHOOK_SECRET:
+        required: false
+
+jobs:
+  generate-and-push:
+    name: Generate docs and push to Forge
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.merged == true
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install autodoc-backend
+        run: |
+          pip install "git+https://github.com/${{ github.repository_owner }}/autodoc-backend.git@${{ inputs.autodoc_version }}"
+
+      - name: Detect Jira issue key
+        id: jira
+        run: |
+          KEY="${{ inputs.jira_issue_key }}"
+          if [ -z "$KEY" ]; then
+            KEY=$(echo "${{ github.event.pull_request.body }}" | grep -oP '[A-Z]+-\d+' | head -1 || true)
+          fi
+          echo "key=$KEY" >> "$GITHUB_OUTPUT"
+
+      - name: Generate documentation
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: |
+          autodoc generate \
+            --repo "${{ inputs.repo_path }}" \
+            --base "${{ github.event.pull_request.base.sha }}" \
+            --head "${{ github.event.pull_request.head.sha }}"
+
+      - name: Push documentation to Forge webhook
+        env:
+          AUTODOC_WEBHOOK_URL: ${{ secrets.AUTODOC_WEBHOOK_URL }}
+          AUTODOC_WEBHOOK_SECRET: ${{ secrets.AUTODOC_WEBHOOK_SECRET }}
+        run: |
+          python - <<'PYEOF'
+          import json
+          import os
+          import glob
+
+          import httpx
+
+          repo_path = "${{ inputs.repo_path }}"
+          autodoc_dir = os.path.join(repo_path, ".autodoc")
+
+          units = []
+          for md_file in sorted(glob.glob(os.path.join(autodoc_dir, "units", "*.md"))):
+              slug = os.path.splitext(os.path.basename(md_file))[0]
+              with open(md_file, encoding="utf-8") as f:
+                  content = f.read()
+              title = slug.replace("-", " ").replace("_", " ").title()
+              units.append({"slug": slug, "kind": "module", "title": title, "markdown": content})
+
+          repo_doc = None
+          repo_doc_path = os.path.join(autodoc_dir, "REPOSITORY.md")
+          if os.path.exists(repo_doc_path):
+              with open(repo_doc_path, encoding="utf-8") as f:
+                  repo_doc = f.read()
+
+          payload = {
+              "repoName": "${{ github.event.repository.name }}",
+              "repoFullName": "${{ github.repository }}",
+              "jiraKey": "${{ steps.jira.outputs.key }}",
+              "confluenceSpaceKey": "${{ inputs.confluence_space_key }}",
+              "webhookSecret": os.environ.get("AUTODOC_WEBHOOK_SECRET", ""),
+              "units": units,
+              "repoDoc": repo_doc,
+              "prNumber": "${{ github.event.pull_request.number }}",
+              "prTitle": "${{ github.event.pull_request.title }}",
+          }
+
+          url = os.environ["AUTODOC_WEBHOOK_URL"]
+          resp = httpx.post(url, json=payload, timeout=60)
+          print(f"Webhook response: {resp.status_code} {resp.text[:500]}")
+          resp.raise_for_status()
+          PYEOF

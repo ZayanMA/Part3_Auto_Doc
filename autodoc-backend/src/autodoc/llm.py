@@ -3,12 +3,25 @@ from __future__ import annotations
 from dotenv import load_dotenv
 load_dotenv()
 import os
+import time
 from typing import Any, Optional
 
 import httpx
 
+from autodoc.models import GenerationUsage
+
 DEFAULT_MODEL_NAME = os.getenv("OPENROUTER_MODEL", "stepfun/step-3.5-flash")
 OPENROUTER_API_URL = os.getenv("OPENROUTER_API_URL", "https://openrouter.ai/api/v1/chat/completions")
+
+# Cost per 1K tokens: (prompt_cost, completion_cost)
+COST_PER_1K_TOKENS: dict[str, tuple[float, float]] = {
+    "stepfun/step-3.5-flash": (0.0001, 0.0002),
+    "anthropic/claude-sonnet-4-5": (0.003, 0.015),
+    "__default__": (0.001, 0.002),
+}
+
+MAX_RETRIES = 3
+RETRY_STATUSES = {429, 500, 502, 503, 504}
 
 
 class OpenRouterError(RuntimeError):
@@ -25,7 +38,6 @@ def _build_headers() -> dict[str, str]:
         "Content-Type": "application/json",
     }
 
-    # Optional but recommended by OpenRouter for attribution
     app_url = os.getenv("OPENROUTER_APP_URL")
     app_name = os.getenv("OPENROUTER_APP_NAME")
     if app_url:
@@ -37,14 +49,56 @@ def _build_headers() -> dict[str, str]:
 
 
 def _extract_text(resp_json: dict[str, Any]) -> str:
-    # OpenAI-compatible: choices[0].message.content
     try:
         return resp_json["choices"][0]["message"]["content"]
     except Exception as e:
         raise OpenRouterError(f"Unexpected response shape: {resp_json!r}") from e
 
 
-def generate_documentation(prompt_text: str, source_file: str, *, model: Optional[str] = None) -> str:
+def _extract_usage(resp_json: dict[str, Any], model: str, prompt_text: str) -> GenerationUsage:
+    usage = resp_json.get("usage", {})
+    prompt_tokens = usage.get("prompt_tokens", max(1, len(prompt_text) // 4))
+    completion_tokens = usage.get("completion_tokens", 0)
+
+    costs = COST_PER_1K_TOKENS.get(model, COST_PER_1K_TOKENS["__default__"])
+    estimated_cost = (prompt_tokens / 1000 * costs[0]) + (completion_tokens / 1000 * costs[1])
+
+    return GenerationUsage(
+        model=model,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        estimated_cost_usd=estimated_cost,
+    )
+
+
+def _post_with_retry(payload: dict, headers: dict, timeout: float) -> dict[str, Any]:
+    last_error: Exception | None = None
+    for attempt in range(MAX_RETRIES):
+        try:
+            with httpx.Client(timeout=timeout) as client:
+                r = client.post(OPENROUTER_API_URL, headers=headers, json=payload)
+            if r.status_code in RETRY_STATUSES:
+                wait = 2 ** attempt
+                time.sleep(wait)
+                last_error = OpenRouterError(f"OpenRouter HTTP {r.status_code}: {r.text}")
+                continue
+            if r.status_code >= 400:
+                raise OpenRouterError(f"OpenRouter HTTP {r.status_code}: {r.text}")
+            return r.json()
+        except (httpx.TimeoutException, httpx.ConnectError) as e:
+            wait = 2 ** attempt
+            time.sleep(wait)
+            last_error = e
+            continue
+    raise OpenRouterError(f"Failed after {MAX_RETRIES} attempts") from last_error
+
+
+def generate_documentation(
+    prompt_text: str,
+    source_file: str,
+    *,
+    model: Optional[str] = None,
+) -> tuple[str, GenerationUsage]:
     model = model or DEFAULT_MODEL_NAME
 
     payload = {
@@ -57,16 +111,10 @@ def generate_documentation(prompt_text: str, source_file: str, *, model: Optiona
     }
 
     headers = _build_headers()
-
-    with httpx.Client(timeout=120.0) as client:
-        r = client.post(OPENROUTER_API_URL, headers=headers, json=payload)
-
-    if r.status_code >= 400:
-        raise OpenRouterError(f"OpenRouter HTTP {r.status_code}: {r.text}")
-
-    text = _extract_text(r.json())
-    # Hard guarantee you're getting *something*
-    return text.strip()
+    resp_json = _post_with_retry(payload, headers, timeout=120.0)
+    text = _extract_text(resp_json)
+    usage = _extract_usage(resp_json, model, prompt_text)
+    return text.strip(), usage
 
 
 def generate_repo_documentation(prompt_text: str, *, model: Optional[str] = None) -> str:
@@ -82,11 +130,5 @@ def generate_repo_documentation(prompt_text: str, *, model: Optional[str] = None
     }
 
     headers = _build_headers()
-
-    with httpx.Client(timeout=180.0) as client:
-        r = client.post(OPENROUTER_API_URL, headers=headers, json=payload)
-
-    if r.status_code >= 400:
-        raise OpenRouterError(f"OpenRouter HTTP {r.status_code}: {r.text}")
-
-    return _extract_text(r.json()).strip()
+    resp_json = _post_with_retry(payload, headers, timeout=180.0)
+    return _extract_text(resp_json).strip()

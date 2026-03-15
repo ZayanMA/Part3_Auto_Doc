@@ -1,0 +1,34 @@
+modules:
+  jira:issuePanel:
+    - key: autodoc-panel
+      resource: main
+      resolver:
+        function: resolver
+      viewportSize: medium
+      title: AutoDoc
+      icon: https://developer.atlassian.com/platform/forge/images/issue-panel-icon.svg
+  webtrigger:
+    - key: autodoc-webhook
+      function: webhook-handler
+  function:
+    - key: resolver
+      handler: index.handler
+    - key: webhook-handler
+      handler: index.webhookHandler
+resources:
+  - key: main
+    path: static/hello-world/build
+permissions:
+  scopes:
+    - read:jira-work
+    - write:jira-work
+    - read:page:confluence
+    - write:page:confluence
+    - read:space:confluence
+    - storage:app
+app:
+  runtime:
+    name: nodejs24.x
+    memoryMB: 256
+    architecture: arm64
+  id: ari:cloud:ecosystem::app/ab715c79-c6fa-411c-8126-a47fa9454de8
