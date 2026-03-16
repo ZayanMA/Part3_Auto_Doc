@@ -1,5 +1,6 @@
 import Resolver from '@forge/resolver';
 import api, { route, storage } from '@forge/api';
+import crypto from 'node:crypto';
 
 const resolver = new Resolver();
 
@@ -115,22 +116,52 @@ resolver.define('rejectPendingDoc', async (req) => {
 
 export const handler = resolver.getDefinitions();
 
+// ─── Signature verification ───────────────────────────────────────────────────
+
+function verifySignature(rawBody, headers) {
+  const secret = process.env.WEBHOOK_SECRET;
+  if (!secret) {
+    // Hard fail — operator must configure the secret before the app accepts requests
+    return { valid: false, status: 500, error: 'Webhook secret not configured on server' };
+  }
+
+  // Forge webtrigger headers arrive as { 'header-name': ['value'] } arrays
+  const sigHeader = (headers['x-autodoc-signature'] ?? [])[0];
+  if (!sigHeader) {
+    return { valid: false, status: 401, error: 'Missing X-AutoDoc-Signature header' };
+  }
+
+  const expected = 'sha256=' + crypto
+    .createHmac('sha256', secret)
+    .update(rawBody)
+    .digest('hex');
+
+  // Constant-time comparison to prevent timing attacks
+  const expectedBuf = Buffer.from(expected, 'utf8');
+  const actualBuf   = Buffer.from(sigHeader, 'utf8');
+  const safe = expectedBuf.length === actualBuf.length &&
+    crypto.timingSafeEqual(expectedBuf, actualBuf);
+
+  return safe
+    ? { valid: true }
+    : { valid: false, status: 401, error: 'Invalid signature' };
+}
+
 // ─── Webtrigger: called by GitHub pipeline ────────────────────────────────────
 
 export const webhookHandler = async (event) => {
+  // ── Authentication ────────────────────────────────────────────────────────
+  const verification = verifySignature(event.body, event.headers ?? {});
+  if (!verification.valid) {
+    return respond(verification.status, { error: verification.error });
+  }
+
+  // ── Parse body ────────────────────────────────────────────────────────────
   let payload;
   try {
     payload = JSON.parse(event.body);
   } catch {
     return respond(400, { error: 'Invalid JSON body' });
-  }
-
-  const { webhookSecret } = payload;
-
-  // Validate webhook secret
-  const storedSecret = await storage.get('WEBHOOK_SECRET');
-  if (storedSecret && webhookSecret !== storedSecret) {
-    return respond(401, { error: 'Unauthorized: invalid webhookSecret' });
   }
 
   // ── New batch format ──────────────────────────────────────────────────────
