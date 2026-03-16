@@ -1,105 +1,130 @@
-# AutoDoc — Forge App
+# autodoc-test (Forge app)
 
-Atlassian Forge app that receives auto-generated documentation from the autodoc-backend
-and publishes it to Confluence, then attaches it to the correct Jira ticket.
+Atlassian Forge app that receives AI-generated documentation from the AutoDoc CI pipeline, queues docs for human review inside a Jira issue panel, and publishes approved docs to Confluence.
 
 ## How it works
 
 ```
-GitHub PR opened / updated
-        │
-        ▼
-GitHub Actions (.github/workflows/autodoc.yml)
-  1. Runs autodoc-backend to generate markdown docs
-  2. POSTs each doc to the Forge webtrigger endpoint
-        │
-        ▼
-Forge Webtrigger  (src/index.js → webhookHandler)
-  1. Validates webhookSecret
-  2. Creates / updates a Confluence page with the markdown
-  3. Attaches a remote link on the Jira issue → Confluence page
-        │
-        ▼
-Jira Issue Panel  (static/hello-world/src/App.js)
-  Shows all AutoDoc-linked Confluence pages directly on the ticket
+GitHub PR merged
+  → GitHub Actions (autodoc.yml)
+      → POST /generate to autodoc-backend API
+      → Poll GET /jobs/{job_id} until done
+      → POST to Forge webtrigger (HMAC-SHA256 signed)
+  → Forge webhookHandler
+      → Verifies X-AutoDoc-Signature header
+      → Stores each documentation unit in Atlassian KVS (pending)
+  → Developer opens Jira issue panel
+      → Reviews pending docs one by one
+      → Approves or rejects each
+  → On approval:
+      → Forge creates/updates Confluence page hierarchy
+          [AutoDoc] <repo-name>
+            ├── API
+            ├── Models
+            ├── Config
+            ├── CLI
+            ├── Tests
+            └── Modules
+      → Links the Confluence page to the Jira issue as a remote link
 ```
 
 ## First-time setup
 
-### 1. Install dependencies and build the frontend
+### Prerequisites
+
+- [Forge CLI](https://developer.atlassian.com/platform/forge/getting-started/) installed: `npm i -g @forge/cli`
+- Logged-in Atlassian account: `forge login`
+
+### Install dependencies
 
 ```bash
+cd jira-confluence-app/autodoc-test
 npm install
-cd static/hello-world && npm install && npm run build && cd ../..
 ```
 
-### 2. Deploy and install the Forge app
+### Deploy and install
 
 ```bash
-forge deploy --non-interactive --e development
-forge install --non-interactive --site <your-site>.atlassian.net --product jira --environment development
-forge install --non-interactive --upgrade --site <your-site>.atlassian.net --product confluence --environment development
+forge deploy
+forge install   # select Jira and Confluence products when prompted
 ```
 
-### 3. Get the webtrigger URL
+### Get the webhook URL
 
 ```bash
 forge webtrigger
 ```
 
-Copy the URL for `autodoc-webhook` — this becomes your `FORGE_WEBHOOK_URL` GitHub secret.
+Copy the URL shown for the `autodoc-webhook` trigger. This is your `AUTODOC_WEBHOOK_URL`.
 
-### 4. Set the webhook secret (recommended)
+### Set the webhook secret
+
+The app reads the HMAC secret from the `WEBHOOK_SECRET` environment variable. Set it using Forge's environment variable store:
 
 ```bash
-forge variables set WEBHOOK_SECRET your-chosen-secret
+forge variables set --environment production WEBHOOK_SECRET <your-secret>
 ```
 
-### 5. Configure GitHub Actions secrets
+Use a strong random value (e.g. `openssl rand -hex 32`). The same value must be set as the `AUTODOC_WEBHOOK_SECRET` GitHub secret in every target repository.
+
+## GitHub secrets required
+
+Set these in each target repository that uses the AutoDoc workflow:
 
 | Secret | Description |
-|---|---|
-| `FORGE_WEBHOOK_URL` | Webtrigger URL from `forge webtrigger` |
+|--------|-------------|
+| `AUTODOC_WEBHOOK_URL` | Webtrigger URL from `forge webtrigger` |
 | `AUTODOC_WEBHOOK_SECRET` | Same value set with `forge variables set` |
-| `CONFLUENCE_SPACE_KEY` | Key of the target Confluence space (e.g. `DOCS`) |
-| `CONFLUENCE_PARENT_PAGE_ID` | (Optional) ID of a parent Confluence page |
-| `ANTHROPIC_API_KEY` | Your Anthropic API key for autodoc-backend |
 
-### 6. PR title convention
-
-The GitHub pipeline extracts the Jira ticket key from the PR title.
-Format PR titles as:
-
-```
-PROJ-123: Brief description of changes
-```
+The workflow also requires `AUTODOC_API_URL` and `AUTODOC_API_KEY` for the backend server — see the [root README](../../README.md) for the full secrets table.
 
 ## Webhook payload format
 
-If calling the endpoint manually or from a custom system:
+The CI pipeline sends a JSON body (compact, keys sorted) with an HMAC-SHA256 signature in the `X-AutoDoc-Signature` header:
+
+```
+X-AutoDoc-Signature: sha256=<hex-digest>
+Content-Type: application/json
+```
+
+Body:
 
 ```json
 {
-  "jiraKey": "PROJ-123",
-  "docTitle": "Module: Authentication",
-  "docContent": "# Authentication\n...(markdown)...",
   "confluenceSpaceKey": "DOCS",
-  "parentPageId": "12345678",
-  "webhookSecret": "your-chosen-secret"
+  "jiraKey": "PROJ-123",
+  "prNumber": "42",
+  "prTitle": "Add login flow",
+  "repoDoc": "# Repository Overview\n...",
+  "repoFullName": "owner/my-repo",
+  "repoName": "my-repo",
+  "units": [
+    {
+      "kind": "api",
+      "markdown": "# Auth Module\n...",
+      "slug": "auth",
+      "title": "Auth Module"
+    }
+  ]
 }
 ```
 
-`parentPageId` is optional. `webhookSecret` is required if you set one via `forge variables set`.
+The `webhookSecret` field is **not** sent in the body. Authentication is solely via the `X-AutoDoc-Signature` header (HMAC-SHA256 over the raw request body).
+
+Required fields: `jiraKey`, `confluenceSpaceKey`, `units`.
 
 ## Local development
+
+Run a tunnel to test against a locally running instance:
 
 ```bash
 forge tunnel
 ```
 
-## Deployment
+## Redeployment
+
+After any code change:
 
 ```bash
-cd static/hello-world && npm run build && cd ../..
-forge deploy --non-interactive --e development
+forge deploy
 ```

@@ -28,7 +28,7 @@ on:
         required: true
         description: "Forge webhook URL to receive generated docs"
       AUTODOC_WEBHOOK_SECRET:
-        required: false
+        required: true
 
 jobs:
   generate-and-push:
@@ -133,6 +133,8 @@ jobs:
           AUTODOC_WEBHOOK_SECRET: ${{ secrets.AUTODOC_WEBHOOK_SECRET }}
         run: |
           python3 - <<'PYEOF'
+          import hashlib
+          import hmac as hmaclib
           import json, os, sys
           import httpx
 
@@ -151,19 +153,33 @@ jobs:
           ]
 
           payload = {
-              "repoName":            "${{ github.event.repository.name }}",
-              "repoFullName":        "${{ github.repository }}",
-              "jiraKey":             "${{ steps.jira.outputs.key }}",
-              "confluenceSpaceKey":  "${{ inputs.confluence_space_key }}",
-              "webhookSecret":       os.environ.get("AUTODOC_WEBHOOK_SECRET", ""),
-              "units":               units,
-              "repoDoc":             result.get("repo_doc"),
-              "prNumber":            "${{ github.event.pull_request.number }}",
-              "prTitle":             "${{ github.event.pull_request.title }}",
+              "repoName":           "${{ github.event.repository.name }}",
+              "repoFullName":       "${{ github.repository }}",
+              "jiraKey":            "${{ steps.jira.outputs.key }}",
+              "confluenceSpaceKey": "${{ inputs.confluence_space_key }}",
+              "units":              units,
+              "repoDoc":            result.get("repo_doc"),
+              "prNumber":           "${{ github.event.pull_request.number }}",
+              "prTitle":            "${{ github.event.pull_request.title }}",
           }
+          # NOTE: webhookSecret field removed — auth is now in the header
+
+          # Canonical serialisation: compact + sorted keys for deterministic HMAC
+          payload_bytes = json.dumps(payload, separators=(',', ':'), sort_keys=True).encode('utf-8')
+
+          secret = os.environ["AUTODOC_WEBHOOK_SECRET"]
+          sig = "sha256=" + hmaclib.new(secret.encode('utf-8'), payload_bytes, hashlib.sha256).hexdigest()
 
           url = os.environ["AUTODOC_WEBHOOK_URL"]
-          resp = httpx.post(url, json=payload, timeout=60)
+          resp = httpx.post(
+              url,
+              content=payload_bytes,          # raw bytes — same bytes that were signed
+              headers={
+                  "Content-Type": "application/json",
+                  "X-AutoDoc-Signature": sig,
+              },
+              timeout=60,
+          )
           print(f"Webhook response: {resp.status_code} {resp.text[:500]}")
           if resp.status_code >= 400:
               sys.exit(1)
