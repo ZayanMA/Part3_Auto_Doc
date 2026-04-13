@@ -103,6 +103,8 @@ class JobRecord(BaseModel):
     status: JobStatus
     created_at: str
     finished_at: Optional[str] = None
+    total_units: int = 0
+    done_units: int = 0
     units: Optional[list[UnitResult]] = None
     repo_doc: Optional[str] = None
     error: Optional[str] = None
@@ -288,6 +290,7 @@ def _run_processing(
 
     total = len(units_to_run)
     _emit_event(job_id, JobEvent(event="job_started", job_id=job_id, total_units=total, done_units=0))
+    _set_job(job_id, total_units=total, done_units=0)
 
     # Persist session to disk at job start (survives server restarts)
     session = PersistedSession(
@@ -435,6 +438,7 @@ def _run_processing(
             )
             unit_results.append(unit_result)
             done_count += 1
+            _set_job(job_id, done_units=done_count)
 
             # Update persisted session
             session = PersistedSession(
@@ -474,6 +478,7 @@ def _run_processing(
             )
             unit_results.append(unit_result)
             done_count += 1
+            _set_job(job_id, done_units=done_count)
 
             session = PersistedSession(
                 job_id=session.job_id,

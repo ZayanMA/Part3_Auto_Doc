@@ -29,6 +29,8 @@ export interface JobRecord {
   status: 'pending' | 'running' | 'done' | 'failed'
   created_at: string
   finished_at?: string
+  total_units: number
+  done_units: number
   units?: UnitResult[]
   repo_doc?: string
   error?: string
