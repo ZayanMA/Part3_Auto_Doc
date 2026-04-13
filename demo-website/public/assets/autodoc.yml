@@ -1,0 +1,186 @@
+name: AutoDoc Generate and Push
+
+on:
+  workflow_call:
+    inputs:
+      confluence_space_key:
+        required: true
+        type: string
+        description: "Confluence space key (e.g. AU)"
+      jira_issue_key:
+        required: false
+        type: string
+        default: ""
+        description: "Jira issue key (e.g. AU-42). If empty, auto-detected from PR body."
+      autodoc_api_url:
+        required: false
+        type: string
+        default: ""
+        description: "Base URL of the hosted AutoDoc API server (overrides secret if provided)"
+    secrets:
+      AUTODOC_API_URL:
+        required: true
+        description: "Base URL of the hosted AutoDoc API server (e.g. https://autodoc.example.com)"
+      AUTODOC_API_KEY:
+        required: true
+        description: "Bearer key for the AutoDoc API server"
+      AUTODOC_WEBHOOK_URL:
+        required: true
+        description: "Forge webhook URL to receive generated docs"
+      AUTODOC_WEBHOOK_SECRET:
+        required: true
+
+jobs:
+  generate-and-push:
+    name: Generate docs and push to Forge
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.merged == true
+
+    steps:
+      - name: Install httpx
+        run: pip install httpx
+
+      - name: Detect Jira issue key
+        id: jira
+        run: |
+          KEY="${{ inputs.jira_issue_key }}"
+          if [ -z "$KEY" ]; then
+            KEY=$(echo "${{ github.event.pull_request.body }}" | grep -oP '[A-Z]+-\d+' | head -1 || true)
+          fi
+          echo "key=$KEY" >> "$GITHUB_OUTPUT"
+
+      - name: Trigger documentation generation
+        id: trigger
+        env:
+          AUTODOC_API_URL: ${{ secrets.AUTODOC_API_URL }}
+          AUTODOC_API_KEY: ${{ secrets.AUTODOC_API_KEY }}
+        run: |
+          python3 - <<'PYEOF'
+          import json, os, sys
+          import httpx
+
+          base_url = os.environ["AUTODOC_API_URL"].rstrip("/")
+          api_key  = os.environ["AUTODOC_API_KEY"]
+
+          payload = {
+              "repo_full_name": "${{ github.repository }}",
+              "github_token":   "${{ github.token }}",
+              "base": "${{ github.event.pull_request.base.sha }}",
+              "head": "${{ github.event.pull_request.head.sha }}",
+          }
+
+          resp = httpx.post(
+              f"{base_url}/generate",
+              json=payload,
+              headers={"Authorization": f"Bearer {api_key}"},
+              timeout=30,
+          )
+          if resp.status_code >= 400:
+              print(f"Error {resp.status_code}: {resp.text[:500]}", file=sys.stderr)
+              sys.exit(1)
+
+          job_id = resp.json()["job_id"]
+          print(f"Job triggered: {job_id}")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"job_id={job_id}\n")
+          PYEOF
+
+      - name: Poll for completion
+        id: poll
+        env:
+          AUTODOC_API_URL: ${{ secrets.AUTODOC_API_URL }}
+          AUTODOC_API_KEY: ${{ secrets.AUTODOC_API_KEY }}
+        run: |
+          python3 - <<'PYEOF'
+          import json, os, sys, time
+          import httpx
+
+          base_url = os.environ["AUTODOC_API_URL"].rstrip("/")
+          api_key  = os.environ["AUTODOC_API_KEY"]
+          job_id   = "${{ steps.trigger.outputs.job_id }}"
+
+          # Poll up to 40 times × 15 s = 10 minutes
+          for attempt in range(40):
+              resp = httpx.get(
+                  f"{base_url}/jobs/{job_id}",
+                  headers={"Authorization": f"Bearer {api_key}"},
+                  timeout=30,
+              )
+              resp.raise_for_status()
+              data = resp.json()
+              status = data["status"]
+              print(f"[{attempt + 1}] status={status}")
+
+              if status == "done":
+                  with open("/tmp/autodoc_result.json", "w") as f:
+                      json.dump(data, f)
+                  print("Generation complete.")
+                  break
+              elif status == "failed":
+                  print(f"Job failed: {data.get('error')}", file=sys.stderr)
+                  sys.exit(1)
+
+              time.sleep(15)
+          else:
+              print("Timed out waiting for AutoDoc job to complete.", file=sys.stderr)
+              sys.exit(1)
+          PYEOF
+
+      - name: Push documentation to Forge webhook
+        env:
+          AUTODOC_WEBHOOK_URL: ${{ secrets.AUTODOC_WEBHOOK_URL }}
+          AUTODOC_WEBHOOK_SECRET: ${{ secrets.AUTODOC_WEBHOOK_SECRET }}
+        run: |
+          python3 - <<'PYEOF'
+          import hashlib
+          import hmac as hmaclib
+          import json, os, sys
+          import httpx
+
+          with open("/tmp/autodoc_result.json") as f:
+              result = json.load(f)
+
+          units = [
+              {
+                  "slug":     u["slug"],
+                  "kind":     u["kind"],
+                  "title":    u["name"],
+                  "markdown": u["markdown"],
+              }
+              for u in (result.get("units") or [])
+              if u.get("markdown") and not u.get("status", "").startswith("failed")
+          ]
+
+          payload = {
+              "repoName":           "${{ github.event.repository.name }}",
+              "repoFullName":       "${{ github.repository }}",
+              "jiraKey":            "${{ steps.jira.outputs.key }}",
+              "confluenceSpaceKey": "${{ inputs.confluence_space_key }}",
+              "units":              units,
+              "repoDoc":            result.get("repo_doc"),
+              "prNumber":           "${{ github.event.pull_request.number }}",
+              "prTitle":            "${{ github.event.pull_request.title }}",
+          }
+          # NOTE: webhookSecret field removed — auth is now in the header
+
+          # Canonical serialisation: compact + sorted keys for deterministic HMAC
+          payload_bytes = json.dumps(payload, separators=(',', ':'), sort_keys=True).encode('utf-8')
+
+          secret = os.environ["AUTODOC_WEBHOOK_SECRET"]
+          sig = "sha256=" + hmaclib.new(secret.encode('utf-8'), payload_bytes, hashlib.sha256).hexdigest()
+
+          url = os.environ["AUTODOC_WEBHOOK_URL"]
+          resp = httpx.post(
+              url,
+              content=payload_bytes,          # raw bytes — same bytes that were signed
+              headers={
+                  "Content-Type": "application/json",
+                  "X-AutoDoc-Signature": sig,
+              },
+              timeout=60,
+          )
+          print(f"Webhook response: {resp.status_code} {resp.text[:500]}")
+          if resp.status_code >= 400:
+              sys.exit(1)
+          PYEOF

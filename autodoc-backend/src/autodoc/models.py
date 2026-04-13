@@ -18,6 +18,33 @@ class UnitContextBundle:
     file_contents: List[tuple[str, str]]   # selected fulltext
     diffs: List[tuple[str, str]]           # only changed files
     neighbour_summaries: List[tuple[str, str]] = field(default_factory=list)
+    repo_manifest: str = ""
+    changed_symbols: List[str] = field(default_factory=list)
+    scored_doc_sections: List[tuple[str, str]] = field(default_factory=list)
+
+
+@dataclass
+class JobUsageSummary:
+    input_tokens: int = 0
+    output_tokens: int = 0
+    units_processed: int = 0
+    units_cached: int = 0
+
+    def add(self, input_t: int, output_t: int) -> "JobUsageSummary":
+        return JobUsageSummary(
+            input_tokens=self.input_tokens + input_t,
+            output_tokens=self.output_tokens + output_t,
+            units_processed=self.units_processed + 1,
+            units_cached=self.units_cached,
+        )
+
+    def add_cached(self) -> "JobUsageSummary":
+        return JobUsageSummary(
+            input_tokens=self.input_tokens,
+            output_tokens=self.output_tokens,
+            units_processed=self.units_processed,
+            units_cached=self.units_cached + 1,
+        )
 
 
 @dataclass
@@ -35,6 +62,7 @@ class DocumentationUnit:
     kind: str
     root: str
     files: list[str] = field(default_factory=list)
+    name_source: str = "heuristic"  # "heuristic" | "llm"
 
 
 class ChangedFile(BaseModel):

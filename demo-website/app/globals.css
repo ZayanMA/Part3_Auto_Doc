@@ -1,0 +1,38 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html {
+  scroll-behavior: smooth;
+}
+
+.prose pre {
+  background: #1e1e2e;
+  border-radius: 6px;
+  padding: 1rem;
+  overflow-x: auto;
+}
+
+.prose code {
+  font-size: 0.875em;
+}
+
+/* Terminal cursor blink */
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+.terminal-cursor {
+  animation: blink 1s step-end infinite;
+}
+
+/* Shimmer animation for progress bar */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.shimmer {
+  background: linear-gradient(90deg, #3b82f6 25%, #60a5fa 50%, #3b82f6 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}

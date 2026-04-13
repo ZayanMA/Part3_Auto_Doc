@@ -10,6 +10,7 @@ TEXT_EXTENSIONS = {
     ".lua", ".r", ".m", ".mm", ".sql", ".sh", ".bash", ".zsh", ".ps1",
     ".yaml", ".yml", ".json", ".toml", ".ini", ".cfg", ".md", ".rst", ".txt",
     ".html", ".css", ".scss", ".xml",
+    ".zig", ".zon",   # Zig source + manifest
 }
 
 EXCLUDED_DIR_NAMES = {

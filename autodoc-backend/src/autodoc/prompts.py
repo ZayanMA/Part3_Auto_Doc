@@ -1,5 +1,23 @@
 PROMPT_VERSION = "v4"
 
+UNIT_NAMING_PROMPT = """\
+You are naming software documentation units for a Confluence wiki.
+For each unit, provide a concise descriptive name (3-7 words) that describes what the code DOES.
+Good: "Authentication & JWT Token Handlers", "Database ORM Models & Schemas"
+Bad: "Auth", "Models", "Src", "Utils"
+
+Also set "coherent" to true if the files in the unit seem semantically related, false if they appear to be an unrelated mix.
+
+Units to name — respond with ONLY valid JSON in this format:
+{
+  "slug1": {"name": "Descriptive Name Here", "coherent": true},
+  "slug2": {"name": "Another Name", "coherent": false}
+}
+
+Units:
+{unit_xml_list}\
+"""
+
 
 def build_unit_prompt(bundle) -> str:
     files_list = "\n".join(f"- {p}" for p in bundle.files)
@@ -27,12 +45,15 @@ def build_unit_prompt(bundle) -> str:
 
     existing_doc_text = (getattr(bundle, "existing_unit_doc", "") or "").strip() or "(none yet)"
 
+    repo_manifest_text = (getattr(bundle, "repo_manifest", "") or "").strip()
+    manifest_section = f"\n## 0. Repository Context\n{repo_manifest_text}\n" if repo_manifest_text else ""
+
     return f"""Before writing, silently reason through:
 1. What is the primary responsibility of this unit?
 2. What are the 2–3 most important public interfaces?
 3. What does this unit NOT do (boundaries)?
 Then write the documentation. Do not include your reasoning in the output.
-
+{manifest_section}
 ## 1. Unit Identity
 - **Name**: {bundle.unit_name}
 - **Root**: {bundle.unit_root}
@@ -75,27 +96,63 @@ Then write the documentation. Do not include your reasoning in the output.
 
 
 def build_unit_patch_prompt(bundle) -> str:
-    """Shorter prompt for patch mode — focused on diff + existing doc."""
+    """Patch mode prompt — context-aware, scored against changed symbols (claw-code pattern)."""
     diffs = getattr(bundle, "diffs", []) or []
     diffs_text = "\n".join(f"\n--- DIFF: {p} ---\n{d}\n" for p, d in diffs) or "(none)"
-    existing_doc_text = (getattr(bundle, "existing_unit_doc", "") or "").strip() or "(none yet)"
 
-    return f"""You are updating technical documentation after a small code change.
+    # Changed symbols: the "query tokens" extracted from the diff
+    symbols = getattr(bundle, "changed_symbols", []) or []
+    symbol_text = ", ".join(f"`{s}`" for s in symbols) if symbols else "(could not extract)"
 
+    # Scored doc sections: only the most-relevant sections, not the full dump
+    scored_sections = getattr(bundle, "scored_doc_sections", []) or []
+    if scored_sections:
+        existing_doc_text = "\n\n".join(f"## {h}\n{b}" for h, b in scored_sections)
+    else:
+        existing_doc_text = (getattr(bundle, "existing_unit_doc", "") or "").strip() or "(none yet)"
+
+    # Changed files at HEAD: full content for the files that actually changed
+    changed_paths = {p for p, _ in diffs}
+    changed_file_contents = [
+        (p, c) for p, c in (getattr(bundle, "file_contents", []) or [])
+        if p in changed_paths
+    ]
+    files_text = "\n".join(f"\n--- FILE (HEAD): {p} ---\n{c}\n" for p, c in changed_file_contents) or "(none)"
+
+    # Cross-unit impact: neighbour summaries
+    neighbour_summaries = getattr(bundle, "neighbour_summaries", []) or []
+    neighbours_text = "\n".join(
+        f"**{name}**: {snippet}" for name, snippet in neighbour_summaries
+    ) or "(none)"
+
+    repo_manifest_text = (getattr(bundle, "repo_manifest", "") or "").strip()
+    manifest_section = f"\n## Repository Context\n{repo_manifest_text}\n" if repo_manifest_text else ""
+
+    return f"""You are updating technical documentation after a code change.
+{manifest_section}
 ## Unit: {bundle.unit_name} ({bundle.unit_kind})
+
+## Changed Symbols
+{symbol_text}
 
 ## What Changed (diffs)
 {diffs_text}
 
-## Existing Documentation
+## Changed Files at HEAD (full content)
+{files_text}
+
+## Related Units (cross-unit impact)
+{neighbours_text}
+
+## Relevant Documentation Sections (scored against changed symbols)
 {existing_doc_text}
 
 ## Instructions
-- Return the COMPLETE updated Markdown document with ALL sections intact.
-- Only change the content of sections that are DIRECTLY affected by the diff above.
-- Copy all other sections from the existing documentation unchanged, word for word.
-- Do NOT remove, rename, or reorder any existing H2 sections.
-- Do NOT invent APIs or behaviour not shown in the diff.
+- Return the COMPLETE updated Markdown document with ALL required sections:
+  ## Overview / ## Responsibilities / ## Key APIs & Interfaces / ## Configuration & Data / ## Dependencies / ## Usage Notes
+- Update ONLY sections directly affected by the diff above.
+- Copy all unaffected sections verbatim from existing documentation.
+- Do NOT invent APIs or behaviour not shown in the diff or file content.
 - Output Markdown only.
 """.strip()
 

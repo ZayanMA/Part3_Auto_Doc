@@ -68,6 +68,14 @@ def _extract_ruby(content: str) -> List[str]:
     return _dedup(imports)
 
 
+def _extract_zig(content: str) -> List[str]:
+    """Zig: @import("...") — captures both std lib and relative file imports."""
+    imports: List[str] = []
+    for m in re.finditer(r'@import\s*\(\s*"([^"]+)"\s*\)', content):
+        imports.append(m.group(1))
+    return _dedup(imports)
+
+
 def _extract_generic(content: str) -> List[str]:
     return []
 
@@ -84,6 +92,7 @@ _EXTRACTORS: dict[str, Callable[[str], List[str]]] = {
     ".java": _extract_java,
     ".rs": _extract_rust,
     ".rb": _extract_ruby,
+    ".zig": _extract_zig,
 }
 
 
