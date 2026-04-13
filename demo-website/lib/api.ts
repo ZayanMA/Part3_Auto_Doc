@@ -1,5 +1,3 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080'
-
 export async function postDemoGenerate(params: {
   git_url: string
   base?: string
@@ -7,7 +5,7 @@ export async function postDemoGenerate(params: {
   all_files?: boolean
   git_token?: string
 }) {
-  const res = await fetch(`${API_BASE}/demo/generate`, {
+  const res = await fetch('/api/demo/generate', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(params),
@@ -19,7 +17,7 @@ export async function postDemoGenerate(params: {
 export async function postDemoGenerateZip(file: File) {
   const form = new FormData()
   form.append('file', file)
-  const res = await fetch(`${API_BASE}/demo/generate-zip`, {
+  const res = await fetch('/api/demo/generate-zip', {
     method: 'POST',
     body: form,
   })
@@ -28,11 +26,11 @@ export async function postDemoGenerateZip(file: File) {
 }
 
 export async function getJob(jobId: string) {
-  const res = await fetch(`${API_BASE}/jobs/${jobId}`)
+  const res = await fetch(`/api/jobs/${jobId}`)
   if (!res.ok) throw new Error(`Failed to get job: ${res.status}`)
   return res.json()
 }
 
 export function getStreamUrl(jobId: string) {
-  return `${API_BASE}/jobs/${jobId}/stream`
+  return `/api/jobs/${jobId}/stream`
 }
