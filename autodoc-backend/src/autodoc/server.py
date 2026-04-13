@@ -637,6 +637,34 @@ def _run_processing(
     save_index(repo_path, new_idx)
 
     finished_ts = _utc_now()
+    successful_units = [u for u in unit_results if not u.status.startswith("failed")]
+    if total > 0 and not successful_units:
+        _set_job(
+            job_id,
+            status=JobStatus.FAILED,
+            finished_at=finished_ts,
+            phase="failed",
+            phase_message="All documentation units failed to generate",
+            units=unit_results,
+            repo_doc=None,
+            error="All documentation units failed to generate",
+        )
+        _emit_event(
+            job_id,
+            JobEvent(
+                event="job_failed",
+                job_id=job_id,
+                phase="failed",
+                phase_message="All documentation units failed to generate",
+                units=[u.model_dump() for u in unit_results],
+                total_units=total,
+                done_units=done_count,
+                error="All documentation units failed to generate",
+            ),
+        )
+        _schedule_queue_cleanup(job_id)
+        return
+
     _set_job(
         job_id,
         status=JobStatus.DONE,
@@ -722,7 +750,7 @@ def run_demo_generate_job(job_id: str, req: DemoGenerateRequest) -> None:
             req.base,
             req.head,
             req.all_files,
-            preflight_llm=False,
+            preflight_llm=not req.mock_generation,
             mock_generation=req.mock_generation,
         )
     except Exception as e:
@@ -769,7 +797,7 @@ def run_demo_zip_job(job_id: str, zip_bytes: bytes, mock_generation: bool = Fals
             "HEAD~1",
             "HEAD",
             all_files=True,
-            preflight_llm=False,
+            preflight_llm=not mock_generation,
             mock_generation=mock_generation,
         )
     except Exception as e:
