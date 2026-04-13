@@ -19,10 +19,11 @@ export default function DemoPage() {
   const {
     phase, jobId, patchJobId,
     units,
+    errorMessage,
     addLogLine, addPatchLogLine,
     updateJobPhase,
     updateProgress, updatePatchProgress,
-    setDone, setPatchDone,
+    setDone, setFailed, setPatchDone,
   } = useDemoStore()
 
   const handleEvent = useCallback((event: JobEvent) => {
@@ -66,10 +67,11 @@ export default function DemoPage() {
         break
       case 'job_failed':
         updateJobPhase(event.phase ?? 'failed', event.phase_message ?? 'Job failed')
+        setFailed(event.error ?? 'Job failed', event.units ?? [])
         log({ timestamp: now(), message: `Job failed: ${event.error}`, type: 'error' })
         break
     }
-  }, [phase, addLogLine, addPatchLogLine, updateJobPhase, updateProgress, updatePatchProgress, setDone, setPatchDone])
+  }, [phase, addLogLine, addPatchLogLine, updateJobPhase, updateProgress, updatePatchProgress, setDone, setFailed, setPatchDone])
 
   const isRunning = phase === 'running'
   const isPatchRunning = phase === 'patch-running'
@@ -78,6 +80,7 @@ export default function DemoPage() {
   useJobPoller(activeJobId, handleEvent, isRunning || isPatchRunning)
 
   const isDone = phase === 'done' || phase === 'patch-done' || phase === 'patch-running'
+  const isFailed = phase === 'failed'
 
   return (
     <>
@@ -118,7 +121,7 @@ export default function DemoPage() {
                     <StreamingLogPane />
                   </div>
                 )}
-                {(phase === 'done' || phase === 'patch-done') && (
+                {(phase === 'done' || phase === 'patch-done' || phase === 'failed') && (
                   <div className="space-y-2">
                     <JobProgressBar />
                     <StreamingLogPane />
@@ -135,6 +138,25 @@ export default function DemoPage() {
                 )}
               </div>
             </div>
+
+            {isFailed && (
+              <div className="mt-8 rounded-xl border border-red-200 bg-red-50 p-5">
+                <h3 className="font-semibold text-red-900">Generation Failed</h3>
+                <p className="mt-2 text-sm text-red-800">
+                  {errorMessage ?? 'The backend reported a failed job.'}
+                </p>
+                {units.length > 0 && (
+                  <div className="mt-4 space-y-2">
+                    {units.filter((u) => u.status.startsWith('failed')).map((u) => (
+                      <div key={u.slug} className="rounded-md border border-red-200 bg-white px-3 py-2 text-sm text-red-900">
+                        <span className="font-medium">{u.name}</span>
+                        <span className="ml-2 text-red-700">{u.status}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
 
             {isDone && (
               <div className="mt-8">

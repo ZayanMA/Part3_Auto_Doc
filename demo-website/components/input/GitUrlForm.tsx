@@ -9,7 +9,7 @@ export default function GitUrlForm() {
   const [mode, setMode] = useState<'full' | 'patch'>('full')
   const [base, setBase] = useState('HEAD~1')
   const [head, setHead] = useState('HEAD')
-  const [mockGeneration, setMockGeneration] = useState(true)
+  const [mockGeneration, setMockGeneration] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const { startJob } = useDemoStore()
