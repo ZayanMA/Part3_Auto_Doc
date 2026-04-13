@@ -12,7 +12,7 @@ export async function GET(
   if (API_KEY) headers['Authorization'] = `Bearer ${API_KEY}`
 
   try {
-    const upstream = await fetch(`${BACKEND}/jobs/${params.id}/stream`, { headers })
+    const upstream = await fetch(`${BACKEND}/jobs/${params.id}/stream`, { headers, cache: 'no-store' })
 
     if (!upstream.ok || !upstream.body) {
       return new Response('Stream unavailable', { status: 502 })

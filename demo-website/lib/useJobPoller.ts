@@ -16,6 +16,8 @@ export function useJobPoller(
   const startedRef = useRef(false)
   const prevDoneRef = useRef(0)
   const startTimeRef = useRef(0)
+  const prevPhaseRef = useRef<string | null>(null)
+  const prevPhaseMessageRef = useRef<string | null>(null)
 
   useEffect(() => {
     if (!jobId || !active) return
@@ -24,6 +26,8 @@ export function useJobPoller(
     startedRef.current = false
     prevDoneRef.current = 0
     startTimeRef.current = Date.now()
+    prevPhaseRef.current = null
+    prevPhaseMessageRef.current = null
 
     intervalRef.current = setInterval(async () => {
       // Hard timeout — prevents polling forever if backend is gone
@@ -36,6 +40,19 @@ export function useJobPoller(
 
       try {
         const job = await getJob(jobId)
+
+        if (job.phase !== prevPhaseRef.current || job.phase_message !== prevPhaseMessageRef.current) {
+          prevPhaseRef.current = job.phase ?? null
+          prevPhaseMessageRef.current = job.phase_message ?? null
+          onEvent({
+            event: 'job_phase',
+            job_id: jobId,
+            phase: job.phase,
+            phase_message: job.phase_message,
+            total_units: job.total_units ?? 0,
+            done_units: job.done_units ?? 0,
+          })
+        }
 
         // Emit job_started once (when we first see the job is past pending)
         if (!startedRef.current && job.status !== 'pending') {
@@ -68,6 +85,8 @@ export function useJobPoller(
           onEvent({
             event: 'job_done',
             job_id: jobId,
+            phase: job.phase,
+            phase_message: job.phase_message,
             units: job.units,
             repo_doc: job.repo_doc,
             total_units: total,
@@ -76,7 +95,13 @@ export function useJobPoller(
         } else if (job.status === 'failed') {
           clearInterval(intervalRef.current!)
           intervalRef.current = null
-          onEvent({ event: 'job_failed', job_id: jobId, error: job.error })
+          onEvent({
+            event: 'job_failed',
+            job_id: jobId,
+            phase: job.phase,
+            phase_message: job.phase_message,
+            error: job.error,
+          })
         }
       } catch (_) {
         // Transient network error — keep polling

@@ -8,6 +8,8 @@ interface DemoState {
   phase: DemoPhase
   jobId: string | null
   repoName: string
+  currentJobPhase: string | null
+  currentJobPhaseMessage: string | null
   logLines: LogLine[]
   units: UnitResult[]
   repoDoc: string | null
@@ -25,6 +27,7 @@ interface DemoState {
   startJob: (jobId: string, repoName: string) => void
   addLogLine: (line: Omit<LogLine, 'id'>) => void
   addPatchLogLine: (line: Omit<LogLine, 'id'>) => void
+  updateJobPhase: (phase: string | null, message: string | null) => void
   updateProgress: (total: number, done: number) => void
   updatePatchProgress: (total: number, done: number) => void
   setDone: (units: UnitResult[], repoDoc: string | null) => void
@@ -41,6 +44,8 @@ export const useDemoStore = create<DemoState>((set) => ({
   phase: 'idle',
   jobId: null,
   repoName: '',
+  currentJobPhase: null,
+  currentJobPhaseMessage: null,
   logLines: [],
   units: [],
   repoDoc: null,
@@ -57,6 +62,8 @@ export const useDemoStore = create<DemoState>((set) => ({
     phase: 'running',
     jobId,
     repoName,
+    currentJobPhase: 'pending',
+    currentJobPhaseMessage: 'Waiting for backend job to start',
     logLines: [],
     units: [],
     repoDoc: null,
@@ -76,12 +83,16 @@ export const useDemoStore = create<DemoState>((set) => ({
     patchLogLines: [...s.patchLogLines, { ...line, id: nextId() }],
   })),
 
+  updateJobPhase: (phase, message) => set({ currentJobPhase: phase, currentJobPhaseMessage: message }),
+
   updateProgress: (total, done) => set({ totalUnits: total, doneUnits: done }),
 
   updatePatchProgress: (total, done) => set({ patchTotalUnits: total, patchDoneUnits: done }),
 
   setDone: (units, repoDoc) => set((s) => ({
     phase: 'done',
+    currentJobPhase: 'done',
+    currentJobPhaseMessage: 'Documentation generation complete',
     units,
     repoDoc,
     selectedUnitSlug: repoDoc ? '__repo__' : (units.length > 0 ? units[0].slug : null),
@@ -97,6 +108,8 @@ export const useDemoStore = create<DemoState>((set) => ({
     phase: 'idle',
     jobId: null,
     repoName: '',
+    currentJobPhase: null,
+    currentJobPhaseMessage: null,
     logLines: [],
     units: [],
     repoDoc: null,

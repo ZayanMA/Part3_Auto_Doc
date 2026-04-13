@@ -29,6 +29,8 @@ export interface JobRecord {
   status: 'pending' | 'running' | 'done' | 'failed'
   created_at: string
   finished_at?: string
+  phase?: string
+  phase_message?: string
   total_units: number
   done_units: number
   units?: UnitResult[]
@@ -43,6 +45,8 @@ export interface JobEvent {
   name?: string
   kind?: string
   status?: string
+  phase?: string
+  phase_message?: string
   total_units?: number
   done_units?: number
   units?: UnitResult[]
