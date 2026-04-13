@@ -9,6 +9,7 @@ export default function GitUrlForm() {
   const [mode, setMode] = useState<'full' | 'patch'>('full')
   const [base, setBase] = useState('HEAD~1')
   const [head, setHead] = useState('HEAD')
+  const [mockGeneration, setMockGeneration] = useState(true)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const { startJob } = useDemoStore()
@@ -26,6 +27,7 @@ export default function GitUrlForm() {
         base: mode === 'patch' ? base : 'HEAD~1',
         head: mode === 'patch' ? head : 'HEAD',
         all_files: mode === 'full',
+        mock_generation: mockGeneration,
       })
       startJob(res.job_id, repoName)
     } catch (e: any) {
@@ -69,6 +71,14 @@ export default function GitUrlForm() {
           Patch mode
         </label>
       </div>
+      <label className="flex items-center gap-2 text-sm cursor-pointer">
+        <input
+          type="checkbox"
+          checked={mockGeneration}
+          onChange={(e) => setMockGeneration(e.target.checked)}
+        />
+        Mock generation mode (no AI credits)
+      </label>
       {mode === 'patch' && (
         <div className="flex gap-3">
           <div className="flex-1">
@@ -89,7 +99,7 @@ export default function GitUrlForm() {
         disabled={loading}
         className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white font-medium py-2 px-4 rounded-md text-sm transition-colors"
       >
-        {loading ? 'Starting...' : 'Generate Documentation'}
+        {loading ? 'Starting...' : (mockGeneration ? 'Generate Mock Documentation' : 'Generate Documentation')}
       </button>
     </form>
   )

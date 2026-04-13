@@ -1,3 +1,5 @@
+export const dynamic = 'force-dynamic'
+
 const BACKEND = process.env.BACKEND_URL ?? 'http://localhost:8080'
 const API_KEY = process.env.AUTODOC_API_KEY
 
@@ -9,7 +11,7 @@ export async function GET(
   if (API_KEY) headers['Authorization'] = `Bearer ${API_KEY}`
 
   try {
-    const res = await fetch(`${BACKEND}/jobs/${params.id}`, { headers })
+    const res = await fetch(`${BACKEND}/jobs/${params.id}`, { headers, cache: 'no-store' })
     const data = await res.json()
     return Response.json(data, { status: res.status })
   } catch {

@@ -6,6 +6,7 @@ import { useDemoStore } from '@/lib/useDemoStore'
 
 export default function ZipUploadForm() {
   const [file, setFile] = useState<File | null>(null)
+  const [mockGeneration, setMockGeneration] = useState(true)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const { startJob } = useDemoStore()
@@ -27,7 +28,7 @@ export default function ZipUploadForm() {
     setLoading(true)
     try {
       const repoName = file.name.replace('.zip', '')
-      const res = await postDemoGenerateZip(file)
+      const res = await postDemoGenerateZip(file, mockGeneration)
       startJob(res.job_id, repoName)
     } catch (e: any) {
       setError(e.message)
@@ -58,12 +59,20 @@ export default function ZipUploadForm() {
         )}
       </div>
       {error && <p className="text-red-600 text-sm">{error}</p>}
+      <label className="flex items-center gap-2 text-sm cursor-pointer">
+        <input
+          type="checkbox"
+          checked={mockGeneration}
+          onChange={(e) => setMockGeneration(e.target.checked)}
+        />
+        Mock generation mode (no AI credits)
+      </label>
       <button
         type="submit"
         disabled={loading || !file}
         className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white font-medium py-2 px-4 rounded-md text-sm transition-colors"
       >
-        {loading ? 'Uploading...' : 'Generate Documentation'}
+        {loading ? 'Uploading...' : (mockGeneration ? 'Generate Mock Documentation' : 'Generate Documentation')}
       </button>
     </form>
   )

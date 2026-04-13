@@ -16,12 +16,14 @@ const STATUS_COLORS: Record<string, string> = {
   full:   'bg-green-100 text-green-700',
   patch:  'bg-blue-100 text-blue-700',
   cached: 'bg-gray-100 text-gray-600',
+  mock:   'bg-amber-100 text-amber-700',
 }
 
 const STATUS_LABELS: Record<string, string> = {
   full:   'generated',
   patch:  'updated',
   cached: 'cached',
+  mock:   'mock',
 }
 
 export default function DocsViewer() {

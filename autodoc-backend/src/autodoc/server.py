@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 
-from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -86,6 +86,7 @@ class DemoGenerateRequest(BaseModel):
     head: str = "HEAD"
     all_files: bool = False
     git_token: Optional[str] = None
+    mock_generation: bool = False
 
 
 class UnitResult(BaseModel):
@@ -103,6 +104,8 @@ class JobRecord(BaseModel):
     status: JobStatus
     created_at: str
     finished_at: Optional[str] = None
+    phase: str = "pending"
+    phase_message: Optional[str] = None
     total_units: int = 0
     done_units: int = 0
     units: Optional[list[UnitResult]] = None
@@ -118,6 +121,8 @@ class JobEvent(BaseModel):
     name: Optional[str] = None
     kind: Optional[str] = None
     status: Optional[str] = None
+    phase: Optional[str] = None
+    phase_message: Optional[str] = None
     total_units: Optional[int] = None
     done_units: Optional[int] = None
     units: Optional[list] = None
@@ -143,6 +148,52 @@ def _set_job(job_id: str, **kwargs) -> None:
         record = _jobs[job_id]
         updated = record.model_copy(update=kwargs)
         _jobs[job_id] = updated
+
+
+def _set_job_phase(job_id: str, phase: str, message: Optional[str] = None) -> None:
+    _set_job(job_id, phase=phase, phase_message=message)
+    _emit_event(
+        job_id,
+        JobEvent(
+            event="job_phase",
+            job_id=job_id,
+            phase=phase,
+            phase_message=message,
+        ),
+    )
+
+
+def _build_mock_markdown(unit_name: str, unit_slug: str, unit_kind: str, files: list[str]) -> str:
+    file_lines = "\n".join(f"- `{path}`" for path in files[:12]) or "- No files detected"
+    return (
+        f"# {unit_name}\n\n"
+        "## Overview\n"
+        f"This is deterministic mock documentation for `{unit_slug}` used to test the demo flow without consuming LLM credits.\n\n"
+        "## Responsibilities\n"
+        f"This unit is classified as `{unit_kind}` and groups related source files for documentation.\n\n"
+        "## Key APIs & Interfaces\n"
+        "Mock mode does not infer real APIs; this section confirms the rendering path works end to end.\n\n"
+        "## Configuration & Data\n"
+        "No synthetic configuration is generated in mock mode.\n\n"
+        "## Dependencies\n"
+        "Dependency analysis is skipped for mock output.\n\n"
+        "## Usage Notes\n"
+        "Use mock generation to validate job progress, polling, SSE, and document rendering without external API calls.\n\n"
+        "## Files\n"
+        f"{file_lines}\n"
+    )
+
+
+def _build_mock_repo_doc(repo_name: str, unit_results: list[UnitResult]) -> str:
+    section_lines = "\n".join(f"- `{unit.name}` (`{unit.kind}`)" for unit in unit_results) or "- No units generated"
+    return (
+        f"# Repository Overview: {repo_name}\n\n"
+        "This is deterministic mock repository documentation generated without external LLM calls.\n\n"
+        "## Included Units\n"
+        f"{section_lines}\n\n"
+        "## Usage Notes\n"
+        "This output is intended for testing the demo website, backend job lifecycle, and document rendering paths.\n"
+    )
 
 
 def _emit_event(job_id: str, event: JobEvent) -> None:
@@ -207,6 +258,9 @@ def _run_processing(
     all_files: bool,
     cfg_file=None,
     model: Optional[str] = None,
+    *,
+    preflight_llm: bool = True,
+    mock_generation: bool = False,
 ) -> None:
     """Shared processing pipeline — emits events to the job queue."""
     from pathlib import Path
@@ -240,14 +294,17 @@ def _run_processing(
 
     ensure_git_repo(repo_path)
 
+    _set_job_phase(job_id, "discovering_files", "Discovering relevant files")
     all_candidates = get_all_relevant_files_git(repo_path)
     all_paths = [c.path for c in all_candidates]
 
+    _set_job_phase(job_id, "grouping_units", "Grouping files into documentation units")
     raw_groups = group_files_into_units(all_paths)
     raw_groups = apply_unit_overrides(raw_groups, cfg.unit_overrides, all_paths)
     raw_groups = collapse_homogeneous_siblings(raw_groups)
 
     try:
+        _set_job_phase(job_id, "building_graph", "Building repository import graph")
         _raw_imports, _resolved = build_import_graph(repo_path, all_paths)
         deps: dict[str, set[str]] = {k: set(v) for k, v in _resolved.items()}
     except Exception:
@@ -256,12 +313,34 @@ def _run_processing(
     groups = merge_by_import_coupling(raw_groups, deps)
     groups = merge_small_groups(groups, min_files=cfg.min_files_per_unit)
     all_units = make_units_from_groups(groups)
-    all_units = enrich_unit_names(all_units, repo_path, cfg.fast_model)
-    all_units = verify_units_relevance(all_units, repo_path, cfg.fast_model)
+    if preflight_llm:
+        _set_job_phase(job_id, "naming_units", "Naming documentation units")
+        all_units = enrich_unit_names(all_units, repo_path, cfg.fast_model)
+        _set_job_phase(job_id, "filtering_units", "Filtering units for relevance")
+        all_units = verify_units_relevance(all_units, repo_path, cfg.fast_model)
 
     if not all_units:
-        _set_job(job_id, status=JobStatus.DONE, finished_at=_utc_now(), units=[], repo_doc=None)
-        _emit_event(job_id, JobEvent(event="job_done", job_id=job_id, units=[], total_units=0, done_units=0))
+        _set_job(
+            job_id,
+            status=JobStatus.DONE,
+            finished_at=_utc_now(),
+            phase="done",
+            phase_message="No documentation units found",
+            units=[],
+            repo_doc=None,
+        )
+        _emit_event(
+            job_id,
+            JobEvent(
+                event="job_done",
+                job_id=job_id,
+                phase="done",
+                phase_message="No documentation units found",
+                units=[],
+                total_units=0,
+                done_units=0,
+            ),
+        )
         _schedule_queue_cleanup(job_id)
         return
 
@@ -289,8 +368,24 @@ def _run_processing(
         units_to_run = [u for u in all_units if u.root in impacted_roots]
 
     total = len(units_to_run)
-    _emit_event(job_id, JobEvent(event="job_started", job_id=job_id, total_units=total, done_units=0))
-    _set_job(job_id, total_units=total, done_units=0)
+    _set_job(
+        job_id,
+        phase="generating",
+        phase_message="Generating documentation units",
+        total_units=total,
+        done_units=0,
+    )
+    _emit_event(
+        job_id,
+        JobEvent(
+            event="job_started",
+            job_id=job_id,
+            phase="generating",
+            phase_message="Generating documentation units",
+            total_units=total,
+            done_units=0,
+        ),
+    )
 
     # Persist session to disk at job start (survives server restarts)
     session = PersistedSession(
@@ -371,7 +466,10 @@ def _run_processing(
             unit_tokens: int = 0
             unit_cost: float = 0.0
 
-            if cache_exists(repo_path, cache_key):
+            if mock_generation:
+                markdown = _build_mock_markdown(unit.name, unit.slug, unit.kind, unit.files)
+                status_label = "mock"
+            elif cache_exists(repo_path, cache_key):
                 md_path, _ = get_cache_paths(repo_path, cache_key)
                 markdown = md_path.read_text(encoding="utf-8")
                 status_label = "cached"
@@ -522,12 +620,16 @@ def _run_processing(
         unit_docs.append((p.stem, content))
 
     if unit_docs:
-        repo_prompt = build_repo_prompt(
-            repo_name=repo_path.name,
-            readme_content=repo_readme,
-            file_docs=unit_docs,
-        )
-        repo_markdown = generate_repo_documentation(repo_prompt, model=cfg.smart_model)
+        _set_job_phase(job_id, "finalizing", "Building repository overview")
+        if mock_generation:
+            repo_markdown = _build_mock_repo_doc(repo_path.name, unit_results)
+        else:
+            repo_prompt = build_repo_prompt(
+                repo_name=repo_path.name,
+                readme_content=repo_readme,
+                file_docs=unit_docs,
+            )
+            repo_markdown = generate_repo_documentation(repo_prompt, model=cfg.smart_model)
         repo_doc_path = repo_path / AUTODOC_DIR / "REPOSITORY.md"
         repo_doc_path.write_text(repo_markdown, encoding="utf-8")
 
@@ -535,7 +637,15 @@ def _run_processing(
     save_index(repo_path, new_idx)
 
     finished_ts = _utc_now()
-    _set_job(job_id, status=JobStatus.DONE, finished_at=finished_ts, units=unit_results, repo_doc=repo_markdown)
+    _set_job(
+        job_id,
+        status=JobStatus.DONE,
+        finished_at=finished_ts,
+        phase="done",
+        phase_message="Documentation generation complete",
+        units=unit_results,
+        repo_doc=repo_markdown,
+    )
 
     # Finalize persisted session
     session = PersistedSession(
@@ -559,6 +669,8 @@ def _run_processing(
 
     _emit_event(job_id, JobEvent(
         event="job_done", job_id=job_id,
+        phase="done",
+        phase_message="Documentation generation complete",
         units=[u.model_dump() for u in unit_results],
         repo_doc=repo_markdown,
         total_units=total, done_units=done_count,
@@ -572,7 +684,7 @@ def _run_processing(
 
 def run_generate_job(job_id: str, req: GenerateRequest) -> None:
     from autodoc.session import PersistedSession, save_session, load_session
-    _set_job(job_id, status=JobStatus.RUNNING)
+    _set_job(job_id, status=JobStatus.RUNNING, phase="cloning", phase_message="Cloning repository")
     tmpdir: Optional[str] = None
     try:
         from pathlib import Path
@@ -583,8 +695,8 @@ def run_generate_job(job_id: str, req: GenerateRequest) -> None:
         _run_processing(job_id, repo_path, req.base, req.head, req.all_files, cfg_file, req.model)
     except Exception as e:
         finished_ts = _utc_now()
-        _set_job(job_id, status=JobStatus.FAILED, finished_at=finished_ts, error=str(e))
-        _emit_event(job_id, JobEvent(event="job_failed", job_id=job_id, error=str(e)))
+        _set_job(job_id, status=JobStatus.FAILED, finished_at=finished_ts, phase="failed", phase_message="Job failed", error=str(e))
+        _emit_event(job_id, JobEvent(event="job_failed", job_id=job_id, phase="failed", phase_message="Job failed", error=str(e)))
         # Persist failure to session store
         existing = load_session(job_id)
         if existing:
@@ -597,25 +709,33 @@ def run_generate_job(job_id: str, req: GenerateRequest) -> None:
 
 
 def run_demo_generate_job(job_id: str, req: DemoGenerateRequest) -> None:
-    _set_job(job_id, status=JobStatus.RUNNING)
+    _set_job(job_id, status=JobStatus.RUNNING, phase="cloning", phase_message="Cloning repository")
     tmpdir: Optional[str] = None
     try:
         from pathlib import Path
         tmpdir = tempfile.mkdtemp(prefix="autodoc_demo_")
         _clone_repo_url(req.git_url, req.git_token, tmpdir)
         repo_path = Path(tmpdir)
-        _run_processing(job_id, repo_path, req.base, req.head, req.all_files)
+        _run_processing(
+            job_id,
+            repo_path,
+            req.base,
+            req.head,
+            req.all_files,
+            preflight_llm=False,
+            mock_generation=req.mock_generation,
+        )
     except Exception as e:
-        _set_job(job_id, status=JobStatus.FAILED, finished_at=_utc_now(), error=str(e))
-        _emit_event(job_id, JobEvent(event="job_failed", job_id=job_id, error=str(e)))
+        _set_job(job_id, status=JobStatus.FAILED, finished_at=_utc_now(), phase="failed", phase_message="Job failed", error=str(e))
+        _emit_event(job_id, JobEvent(event="job_failed", job_id=job_id, phase="failed", phase_message="Job failed", error=str(e)))
         _schedule_queue_cleanup(job_id)
     finally:
         if tmpdir:
             shutil.rmtree(tmpdir, ignore_errors=True)
 
 
-def run_demo_zip_job(job_id: str, zip_bytes: bytes) -> None:
-    _set_job(job_id, status=JobStatus.RUNNING)
+def run_demo_zip_job(job_id: str, zip_bytes: bytes, mock_generation: bool = False) -> None:
+    _set_job(job_id, status=JobStatus.RUNNING, phase="extracting", phase_message="Extracting ZIP archive")
     tmpdir: Optional[str] = None
     try:
         from pathlib import Path
@@ -643,10 +763,18 @@ def run_demo_zip_job(job_id: str, zip_bytes: bytes) -> None:
                 cwd=tmpdir, check=True, capture_output=True,
             )
 
-        _run_processing(job_id, repo_path, "HEAD~1", "HEAD", all_files=True)
+        _run_processing(
+            job_id,
+            repo_path,
+            "HEAD~1",
+            "HEAD",
+            all_files=True,
+            preflight_llm=False,
+            mock_generation=mock_generation,
+        )
     except Exception as e:
-        _set_job(job_id, status=JobStatus.FAILED, finished_at=_utc_now(), error=str(e))
-        _emit_event(job_id, JobEvent(event="job_failed", job_id=job_id, error=str(e)))
+        _set_job(job_id, status=JobStatus.FAILED, finished_at=_utc_now(), phase="failed", phase_message="Job failed", error=str(e))
+        _emit_event(job_id, JobEvent(event="job_failed", job_id=job_id, phase="failed", phase_message="Job failed", error=str(e)))
         _schedule_queue_cleanup(job_id)
     finally:
         if tmpdir:
@@ -837,6 +965,7 @@ def demo_generate(req: DemoGenerateRequest, background_tasks: BackgroundTasks) -
 async def demo_generate_zip(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
+    mock_generation: bool = Form(False),
 ) -> dict:
     job_id = str(uuid.uuid4())
     record = JobRecord(job_id=job_id, status=JobStatus.PENDING, created_at=_utc_now())
@@ -846,7 +975,7 @@ async def demo_generate_zip(
     with _job_queues_lock:
         _job_queues[job_id] = q
     zip_bytes = await file.read()
-    background_tasks.add_task(run_demo_zip_job, job_id, zip_bytes)
+    background_tasks.add_task(run_demo_zip_job, job_id, zip_bytes, mock_generation)
     return {
         "job_id": job_id,
         "status": JobStatus.PENDING,

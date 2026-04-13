@@ -5,7 +5,6 @@ import InputPanel from '@/components/input/InputPanel'
 import JobProgressBar from '@/components/progress/JobProgressBar'
 import StreamingLogPane from '@/components/progress/StreamingLogPane'
 import DocsViewer from '@/components/docs/DocsViewer'
-import QualityDashboard from '@/components/docs/QualityDashboard'
 import JiraIssueMock from '@/components/jira-mock/JiraIssueMock'
 import CIPipelineShowcase from '@/components/ci-showcase/CIPipelineShowcase'
 import { useDemoStore } from '@/lib/useDemoStore'
@@ -21,6 +20,7 @@ export default function DemoPage() {
     phase, jobId, patchJobId,
     units,
     addLogLine, addPatchLogLine,
+    updateJobPhase,
     updateProgress, updatePatchProgress,
     setDone, setPatchDone,
   } = useDemoStore()
@@ -31,9 +31,19 @@ export default function DemoPage() {
     const updateProg = isPatch ? updatePatchProgress : updateProgress
 
     switch (event.event) {
+      case 'job_phase':
+        updateJobPhase(event.phase ?? null, event.phase_message ?? null)
+        if (event.phase_message) {
+          log({ timestamp: now(), message: event.phase_message, type: 'info' })
+        }
+        if (event.total_units !== undefined && event.done_units !== undefined) {
+          updateProg(event.total_units, event.done_units)
+        }
+        break
       case 'job_started':
         log({ timestamp: now(), message: `Job started — ${event.total_units} units to process`, type: 'info' })
-        if (event.total_units) updateProg(event.total_units, 0)
+        updateJobPhase(event.phase ?? 'generating', event.phase_message ?? 'Generating documentation units')
+        if (event.total_units !== undefined) updateProg(event.total_units, 0)
         break
       case 'unit_started':
         log({ timestamp: now(), message: `Processing: ${event.name} [${event.kind}]`, type: 'unit' })
@@ -50,14 +60,16 @@ export default function DemoPage() {
         break
       case 'job_done':
         log({ timestamp: now(), message: 'Documentation generation complete!', type: 'success' })
+        updateJobPhase(event.phase ?? 'done', event.phase_message ?? 'Documentation generation complete')
         if (isPatch) setPatchDone(event.units ?? [])
         else setDone(event.units ?? [], event.repo_doc ?? null)
         break
       case 'job_failed':
+        updateJobPhase(event.phase ?? 'failed', event.phase_message ?? 'Job failed')
         log({ timestamp: now(), message: `Job failed: ${event.error}`, type: 'error' })
         break
     }
-  }, [phase, addLogLine, addPatchLogLine, updateProgress, updatePatchProgress, setDone, setPatchDone])
+  }, [phase, addLogLine, addPatchLogLine, updateJobPhase, updateProgress, updatePatchProgress, setDone, setPatchDone])
 
   const isRunning = phase === 'running'
   const isPatchRunning = phase === 'patch-running'
@@ -134,19 +146,6 @@ export default function DemoPage() {
             )}
           </div>
         </section>
-
-        {/* Section: Quality Dashboard */}
-        {isDone && units.some((u) => u.quality) && (
-          <section id="quality" className="py-16 px-4 bg-gray-50">
-            <div className="max-w-5xl mx-auto">
-              <div className="text-center mb-10">
-                <h2 className="text-3xl font-bold text-gray-900">Documentation Quality</h2>
-                <p className="text-gray-500 mt-2">Automated quality scoring across sections, coverage, readability, and hallucination risk</p>
-              </div>
-              <QualityDashboard units={units} />
-            </div>
-          </section>
-        )}
 
         {/* Section 2: Jira Mock */}
         <section id="jira" className="py-16 px-4">
