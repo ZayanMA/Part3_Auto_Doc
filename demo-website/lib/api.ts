@@ -30,7 +30,3 @@ export async function getJob(jobId: string) {
   if (!res.ok) throw new Error(`Failed to get job: ${res.status}`)
   return res.json()
 }
-
-export function getStreamUrl(jobId: string) {
-  return `/api/jobs/${jobId}/stream`
-}
