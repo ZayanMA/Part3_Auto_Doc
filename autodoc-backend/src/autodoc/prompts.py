@@ -84,11 +84,17 @@ Then write the documentation. Do not include your reasoning in the output.
   ## Configuration & Data
   ## Dependencies
   ## Usage Notes
+- Start with a single H1 title line only if needed; all required content sections must be H2 headings exactly as listed above.
+- Put a blank line after every heading and before every list or code block.
+- Keep paragraphs short; prefer bullets over dense prose.
+- In `## Key APIs & Interfaces`, list each important API/interface as its own bullet with a short explanation and file citation.
+- In `## Responsibilities`, `## Dependencies`, and `## Configuration & Data`, prefer compact bullet lists.
+- Use fenced code blocks only when they add real value; do not emit huge code dumps.
+- Use Markdown tables only when summarising structured config or interfaces more clearly than bullets.
 - Only mention functions, classes, parameters, or behaviours that appear verbatim in the code above.
 - For each API or interface listed, cite the file it comes from (e.g. `cache.py`).
 - If a section has nothing to say, write "N/A" rather than omitting the heading.
 - Do not add sections beyond those listed above.
-- Prefer bullet points within sections over dense paragraphs.
 - Do not repeat the unit name or file list in the output body.
 - DO NOT invent APIs or behaviour not supported by the code/diffs.
 - Prefer updating the existing doc rather than rewriting from scratch.
@@ -152,6 +158,9 @@ def build_unit_patch_prompt(bundle) -> str:
   ## Overview / ## Responsibilities / ## Key APIs & Interfaces / ## Configuration & Data / ## Dependencies / ## Usage Notes
 - Update ONLY sections directly affected by the diff above.
 - Copy all unaffected sections verbatim from existing documentation.
+- Preserve clean Markdown structure with blank lines between headings, paragraphs, lists, and code blocks.
+- Keep sections concise and scannable; prefer bullets to long paragraphs.
+- In `## Key APIs & Interfaces`, present each changed API or interface as a separate bullet with a short explanation and file citation.
 - Do NOT invent APIs or behaviour not shown in the diff or file content.
 - Output Markdown only.
 """.strip()
@@ -186,6 +195,12 @@ def build_repo_prompt(
 (Minimal steps for a new contributor to run locally)
 
 Do not repeat unit documentation verbatim. Synthesise and connect.
+Keep the Markdown visually clean:
+- short paragraphs
+- bullets for component maps and entry points
+- blank lines between headings and lists
+- no giant walls of text
+- output Markdown only
 
 Existing repository README (if any):
 {readme_content}

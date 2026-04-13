@@ -36,6 +36,8 @@ export default function DocsViewer() {
     : units
 
   const selected = allUnits.find((u) => u.slug === selectedUnitSlug) ?? allUnits[0]
+  const missingSections = selected?.quality?.missing_sections ?? []
+  const hasFormatWarning = missingSections.length > 0
 
   return (
     <div className="flex gap-0 border border-gray-200 rounded-xl overflow-hidden h-[calc(100vh-300px)] min-h-[500px]">
@@ -75,6 +77,13 @@ export default function DocsViewer() {
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-6">
+        {hasFormatWarning && (
+          <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            This documentation is missing some expected sections:
+            {' '}
+            {missingSections.join(', ')}.
+          </div>
+        )}
         {selected ? (
           selected.prev_markdown ? (
             <DiffViewer markdown={selected.markdown} prevMarkdown={selected.prev_markdown} />
