@@ -282,6 +282,7 @@ def _run_processing(
     from autodoc.filters import get_all_relevant_files_git, is_probably_text_file
     from autodoc.git_utils import ensure_git_repo, get_changed_files
     from autodoc.llm import generate_documentation, generate_repo_documentation
+    from autodoc.manifest import build_repo_manifest, render_manifest
     from autodoc.prompts import build_repo_prompt, build_unit_prompt, build_unit_patch_prompt
     from autodoc.router import route_model
     from autodoc.quality import evaluate_unit
@@ -343,6 +344,9 @@ def _run_processing(
         )
         _schedule_queue_cleanup(job_id)
         return
+
+    repo_manifest_obj = build_repo_manifest(repo_path, all_units, all_paths)
+    repo_manifest_text = render_manifest(repo_manifest_obj)
 
     changed_files_set: set[str] = set()
     if all_files:
@@ -434,6 +438,7 @@ def _run_processing(
                 token_budget=cfg.token_budget,
                 all_units=all_units,
                 deps=deps,
+                repo_manifest=repo_manifest_text,
             )
             decision = route_model(unit, changed_files_set, bundle.diffs, bundle.existing_unit_doc, cfg)
 
@@ -639,6 +644,14 @@ def _run_processing(
     finished_ts = _utc_now()
     successful_units = [u for u in unit_results if not u.status.startswith("failed")]
     if total > 0 and not successful_units:
+        failed_reasons = [
+            f"{u.name}: {u.status.removeprefix('failed: ').strip()}"
+            for u in unit_results
+            if u.status.startswith("failed:")
+        ]
+        aggregate_error = "All documentation units failed to generate"
+        if failed_reasons:
+            aggregate_error = f"{aggregate_error}. " + " | ".join(failed_reasons[:3])
         _set_job(
             job_id,
             status=JobStatus.FAILED,
@@ -647,7 +660,7 @@ def _run_processing(
             phase_message="All documentation units failed to generate",
             units=unit_results,
             repo_doc=None,
-            error="All documentation units failed to generate",
+            error=aggregate_error,
         )
         _emit_event(
             job_id,
@@ -659,7 +672,7 @@ def _run_processing(
                 units=[u.model_dump() for u in unit_results],
                 total_units=total,
                 done_units=done_count,
-                error="All documentation units failed to generate",
+                error=aggregate_error,
             ),
         )
         _schedule_queue_cleanup(job_id)

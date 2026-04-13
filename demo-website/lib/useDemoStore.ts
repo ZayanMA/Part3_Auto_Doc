@@ -2,7 +2,7 @@
 import { create } from 'zustand'
 import { UnitResult, LogLine } from './types'
 
-export type DemoPhase = 'idle' | 'running' | 'done' | 'patch-running' | 'patch-done'
+export type DemoPhase = 'idle' | 'running' | 'done' | 'failed' | 'patch-running' | 'patch-done'
 
 interface DemoState {
   phase: DemoPhase
@@ -10,6 +10,7 @@ interface DemoState {
   repoName: string
   currentJobPhase: string | null
   currentJobPhaseMessage: string | null
+  errorMessage: string | null
   logLines: LogLine[]
   units: UnitResult[]
   repoDoc: string | null
@@ -31,6 +32,7 @@ interface DemoState {
   updateProgress: (total: number, done: number) => void
   updatePatchProgress: (total: number, done: number) => void
   setDone: (units: UnitResult[], repoDoc: string | null) => void
+  setFailed: (error: string | null, units?: UnitResult[]) => void
   setPatchDone: (units: UnitResult[]) => void
   setSelectedUnit: (slug: string | null) => void
   startPatchJob: (jobId: string) => void
@@ -46,6 +48,7 @@ export const useDemoStore = create<DemoState>((set) => ({
   repoName: '',
   currentJobPhase: null,
   currentJobPhaseMessage: null,
+  errorMessage: null,
   logLines: [],
   units: [],
   repoDoc: null,
@@ -64,6 +67,7 @@ export const useDemoStore = create<DemoState>((set) => ({
     repoName,
     currentJobPhase: 'pending',
     currentJobPhaseMessage: 'Waiting for backend job to start',
+    errorMessage: null,
     logLines: [],
     units: [],
     repoDoc: null,
@@ -93,10 +97,21 @@ export const useDemoStore = create<DemoState>((set) => ({
     phase: 'done',
     currentJobPhase: 'done',
     currentJobPhaseMessage: 'Documentation generation complete',
+    errorMessage: null,
     units,
     repoDoc,
     selectedUnitSlug: repoDoc ? '__repo__' : (units.length > 0 ? units[0].slug : null),
   })),
+
+  setFailed: (error, units = []) => set({
+    phase: 'failed',
+    currentJobPhase: 'failed',
+    currentJobPhaseMessage: 'Documentation generation failed',
+    errorMessage: error,
+    units,
+    repoDoc: null,
+    selectedUnitSlug: units.length > 0 ? units[0].slug : null,
+  }),
 
   setPatchDone: (units) => set({ phase: 'patch-done', patchUnits: units }),
 
@@ -110,6 +125,7 @@ export const useDemoStore = create<DemoState>((set) => ({
     repoName: '',
     currentJobPhase: null,
     currentJobPhaseMessage: null,
+    errorMessage: null,
     logLines: [],
     units: [],
     repoDoc: null,

@@ -100,6 +100,7 @@ export function useJobPoller(
             job_id: jobId,
             phase: job.phase,
             phase_message: job.phase_message,
+            units: job.units,
             error: job.error,
           })
         }

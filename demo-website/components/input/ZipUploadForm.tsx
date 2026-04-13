@@ -6,7 +6,7 @@ import { useDemoStore } from '@/lib/useDemoStore'
 
 export default function ZipUploadForm() {
   const [file, setFile] = useState<File | null>(null)
-  const [mockGeneration, setMockGeneration] = useState(true)
+  const [mockGeneration, setMockGeneration] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const { startJob } = useDemoStore()
