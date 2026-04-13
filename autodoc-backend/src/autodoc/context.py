@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 import subprocess
 
 from autodoc.git_utils import get_file_diff, read_file_at_head
@@ -17,6 +18,14 @@ IGNORED_DIRS = {
 
 IGNORED_FILE_NAMES = {
     "__init__.py", "__main__.py"
+}
+
+_DATA_ONLY_EXTENSIONS = {'.json', '.po', '.pot', '.csv', '.xliff', '.strings', '.yaml', '.yml', '.mo'}
+_DATA_DIR_NAMES = {'locales', 'i18n', 'translations', 'lang', 'locale', 'nls'}
+_ISO_LANG_CODES = {
+    'en', 'ar', 'ja', 'fr', 'de', 'zh', 'ko', 'es', 'pt', 'it', 'ru', 'nl',
+    'sv', 'pl', 'tr', 'uk', 'he', 'fi', 'da', 'nb', 'cs', 'hu', 'ro', 'sk',
+    'bg', 'hr', 'lt', 'lv', 'sl', 'et', 'vi', 'th', 'id', 'ms', 'fa', 'ca',
 }
 
 HELPER_NAME_HINTS = {
@@ -273,6 +282,249 @@ def parent_group_key(group_key: str) -> str | None:
     return str(Path(*p.parts[:-1]))
 
 
+def collapse_homogeneous_siblings(groups: dict[str, list[str]]) -> dict[str, list[str]]:
+    """Merge locale/variant sibling groups into one parent, or drop if pure data dirs."""
+    parent_to_children: dict[str, list[str]] = defaultdict(list)
+    for key in groups:
+        p = parent_group_key(key)
+        if p is not None:
+            parent_to_children[p].append(key)
+
+    result = dict(groups)
+
+    for parent, children in parent_to_children.items():
+        if len(children) < 2:
+            continue
+
+        # Compute filename overlap across sibling groups
+        sibling_file_sets = [{Path(f).name for f in result[child]} for child in children if child in result]
+        if len(sibling_file_sets) < 2:
+            continue
+
+        is_homogeneous = False
+        for i in range(len(sibling_file_sets)):
+            for j in range(i + 1, len(sibling_file_sets)):
+                a, b = sibling_file_sets[i], sibling_file_sets[j]
+                if not a or not b:
+                    continue
+                overlap = len(a & b) / min(len(a), len(b))
+                if overlap >= 0.6:
+                    is_homogeneous = True
+                    break
+            if is_homogeneous:
+                break
+
+        if not is_homogeneous:
+            continue
+
+        # Merge all siblings into parent
+        merged_files: list[str] = []
+        for child in children:
+            if child in result:
+                merged_files.extend(result.pop(child))
+
+        parent_dir_name = Path(parent).name.lower()
+        all_data_ext = all(Path(f).suffix.lower() in _DATA_ONLY_EXTENSIONS for f in merged_files)
+        if all_data_ext and parent_dir_name in _DATA_DIR_NAMES:
+            # Drop entirely — pure locale data, not worth documenting
+            continue
+
+        existing = result.get(parent, [])
+        result[parent] = existing + merged_files
+
+    return result
+
+
+def enrich_unit_names(
+    units: list["DocumentationUnit"],
+    repo_path: "Path",
+    fast_model: str,
+) -> list["DocumentationUnit"]:
+    """Use a batched LLM call to give units descriptive names. Falls back to heuristics on error."""
+    import hashlib
+    import json
+    import logging
+
+    from autodoc.cache import AUTODOC_DIR as _AUTODOC_DIR
+    from autodoc.llm import call_llm_json
+    from autodoc.prompts import UNIT_NAMING_PROMPT
+
+    log = logging.getLogger(__name__)
+    cache_path = repo_path / _AUTODOC_DIR / "name_cache.json"
+    cache: dict[str, dict] = {}
+    if cache_path.exists():
+        try:
+            cache = json.loads(cache_path.read_text(encoding="utf-8"))
+        except Exception:
+            cache = {}
+
+    def _cache_key(unit: "DocumentationUnit") -> str:
+        combo = unit.slug + ":" + ",".join(sorted(unit.files))
+        return hashlib.md5(combo.encode()).hexdigest()[:10]
+
+    def _code_snippet(unit: "DocumentationUnit") -> str:
+        """Return up to 5 lines from the largest non-test file."""
+        best_path: str | None = None
+        best_size = 0
+        for f in unit.files[:12]:
+            if "test" in Path(f).stem.lower():
+                continue
+            full = repo_path / f
+            if full.exists():
+                size = full.stat().st_size
+                if size > best_size:
+                    best_size = size
+                    best_path = f
+        if best_path:
+            try:
+                lines = (repo_path / best_path).read_text(encoding="utf-8", errors="ignore").splitlines()
+                return "\n".join(lines[:5])
+            except Exception:
+                pass
+        return ""
+
+    # Separate units needing LLM naming from cached ones
+    uncached: list["DocumentationUnit"] = []
+    for unit in units:
+        key = _cache_key(unit)
+        if key not in cache:
+            uncached.append(unit)
+
+    if uncached:
+        try:
+            # Build XML-style unit list for the prompt
+            parts: list[str] = []
+            for unit in uncached:
+                files_sample = unit.files[:12]
+                snippet = _code_snippet(unit)
+                parts.append(
+                    f'<unit slug="{unit.slug}">\n'
+                    f'  <files>{", ".join(files_sample)}</files>\n'
+                    f'  <snippet>{snippet}</snippet>\n'
+                    f'</unit>'
+                )
+            unit_xml_list = "\n".join(parts)
+            # Use str.replace, NOT .format() — the template contains literal { } in
+            # the JSON example which would cause KeyError with Python's str.format().
+            prompt = UNIT_NAMING_PROMPT.replace("{unit_xml_list}", unit_xml_list)
+
+            result = call_llm_json(prompt, fast_model)
+            if isinstance(result, dict):
+                for unit in uncached:
+                    key = _cache_key(unit)
+                    entry = result.get(unit.slug)
+                    if isinstance(entry, dict) and "name" in entry:
+                        cache[key] = {
+                            "name": entry["name"],
+                            "coherent": bool(entry.get("coherent", True)),
+                        }
+
+            try:
+                cache_path.parent.mkdir(parents=True, exist_ok=True)
+                cache_path.write_text(json.dumps(cache, indent=2), encoding="utf-8")
+            except Exception:
+                pass
+        except Exception as e:
+            log.warning("enrich_unit_names failed, using heuristic names: %s", e)
+
+    # Apply cached names back to units
+    result_units: list["DocumentationUnit"] = []
+    for unit in units:
+        key = _cache_key(unit)
+        entry = cache.get(key)
+        if entry and entry.get("name"):
+            if not entry.get("coherent", True):
+                log.info("Unit '%s' flagged as incoherent by LLM", unit.slug)
+            from dataclasses import replace
+            updated = replace(unit, name=entry["name"], name_source="llm")
+            result_units.append(updated)
+        else:
+            result_units.append(unit)
+
+    return result_units
+
+
+def verify_units_relevance(
+    units: list["DocumentationUnit"],
+    repo_path: "Path",
+    fast_model: str,
+) -> list["DocumentationUnit"]:
+    """Filter borderline units (locale dirs, data-only) using a cheap LLM check."""
+    import hashlib
+    import json
+    import logging
+
+    from autodoc.cache import AUTODOC_DIR as _AUTODOC_DIR
+    from autodoc.llm import generate_documentation
+
+    log = logging.getLogger(__name__)
+    cache_path = repo_path / _AUTODOC_DIR / "relevance_cache.json"
+    cache: dict[str, bool] = {}
+    if cache_path.exists():
+        try:
+            cache = json.loads(cache_path.read_text(encoding="utf-8"))
+        except Exception:
+            cache = {}
+
+    def _is_borderline(unit: "DocumentationUnit") -> bool:
+        parts = Path(unit.root).parts
+        top_dir = parts[0].lower() if parts else unit.root.lower()
+        if top_dir in _ISO_LANG_CODES:
+            return True
+        if unit.files and all(Path(f).suffix.lower() in _DATA_ONLY_EXTENSIONS for f in unit.files):
+            return True
+        return False
+
+    def _cache_key(unit: "DocumentationUnit") -> str:
+        files_hash = hashlib.md5(",".join(sorted(unit.files)).encode()).hexdigest()[:8]
+        return f"{unit.slug}:{files_hash}"
+
+    kept: list["DocumentationUnit"] = []
+    cache_updated = False
+
+    for unit in units:
+        if not _is_borderline(unit):
+            kept.append(unit)
+            continue
+
+        key = _cache_key(unit)
+        if key in cache:
+            if cache[key]:
+                kept.append(unit)
+            else:
+                log.info("Skipping unit '%s' (cached: not relevant)", unit.name)
+            continue
+
+        files_sample = unit.files[:10]
+        prompt = (
+            f"Unit: `{unit.name}`. Files: `{files_sample}`. "
+            "Does this contain source code or business logic worth documenting? "
+            "Answer YES or NO only."
+        )
+        try:
+            answer, _ = generate_documentation(prompt, unit.slug, model=fast_model)
+            is_relevant = answer.strip().upper().startswith("YES")
+        except Exception:
+            is_relevant = True  # default to keeping on error
+
+        cache[key] = is_relevant
+        cache_updated = True
+
+        if is_relevant:
+            kept.append(unit)
+        else:
+            log.info("Skipping unit '%s' (LLM: not relevant)", unit.name)
+
+    if cache_updated:
+        try:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            cache_path.write_text(json.dumps(cache, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+
+    return kept
+
+
 def merge_small_groups(
     groups: dict[str, list[str]],
     min_files: int = 3,
@@ -291,6 +543,8 @@ def merge_small_groups(
 
 def title_from_group_key(group_key: str) -> str:
     last = Path(group_key).name
+    if last == "root":
+        return "Repository Root"
     return last.replace("_", " ").replace("-", " ").title()
 
 
@@ -315,6 +569,71 @@ def make_units_from_groups(groups: dict[str, list[str]]) -> list[DocumentationUn
 
 def estimate_tokens(text: str) -> int:
     return max(1, len(text) // 4)
+
+
+def extract_changed_symbols(diff_text: str) -> list[str]:
+    """
+    Extract function/class names from added lines in a unified diff.
+    Mirrors claw-code's prompt tokenization: changed symbols become the 'query tokens'
+    used to score which documentation sections are most relevant to update.
+    """
+    symbols: list[str] = []
+    for line in diff_text.splitlines():
+        if not line.startswith('+') or line.startswith('+++'):
+            continue
+        m = re.match(r'^\+\s*(def|class)\s+(\w+)', line)
+        if m:
+            symbols.append(m.group(2))
+    return list(dict.fromkeys(symbols))  # dedupe, preserve order
+
+
+def score_doc_sections(
+    existing_doc: str,
+    symbols: list[str],
+) -> list[tuple[str, str]]:
+    """
+    Split existing_doc into H2 sections and score each against changed symbols.
+    Mirrors claw-code's _score(): count how many symbol tokens appear in each section.
+    Returns sections sorted by relevance (desc). Overview is always surfaced first.
+    """
+    if not existing_doc or not symbols:
+        return []
+
+    sections: list[tuple[str, str]] = []
+    current_heading = ""
+    current_lines: list[str] = []
+
+    for line in existing_doc.splitlines():
+        if line.startswith("## "):
+            if current_heading:
+                sections.append((current_heading, "\n".join(current_lines).strip()))
+            current_heading = line.lstrip("# ").strip()
+            current_lines = []
+        else:
+            current_lines.append(line)
+    if current_heading:
+        sections.append((current_heading, "\n".join(current_lines).strip()))
+
+    symbol_tokens = {s.lower() for s in symbols}
+
+    def _section_score(heading: str, body: str) -> int:
+        haystack = (heading + " " + body).lower()
+        return sum(1 for tok in symbol_tokens if tok in haystack)
+
+    scored = sorted(sections, key=lambda s: _section_score(s[0], s[1]), reverse=True)
+    overview = [(h, b) for h, b in scored if h.lower() == "overview"]
+    rest = [(h, b) for h, b in scored if h.lower() != "overview"]
+    return overview + rest
+
+
+def _keyword_density_score(content: str, kind: str) -> int:
+    """Score file content by keyword frequency relative to unit kind (claw-code routing pattern)."""
+    patterns = KIND_PRIMARY_PATTERNS.get(kind, set())
+    if not patterns:
+        return 0
+    tokens = re.findall(r'\w+', content.lower())
+    matches = sum(1 for t in tokens if t in patterns)
+    return min(matches * 10, 300)
 
 
 def score_file_importance(
@@ -345,6 +664,8 @@ def score_file_importance(
 
     if line_count > 50:
         score += 100
+
+    score += _keyword_density_score(content, unit_kind)
 
     # Test file penalty
     if "test" in name or "spec" in name:
@@ -452,6 +773,7 @@ def build_unit_context_bundle(
     token_budget: int = 12000,
     all_units: list[DocumentationUnit] | None = None,
     deps: dict[str, set[str]] | None = None,
+    repo_manifest: str = "",
 ) -> UnitContextBundle:
     readme_content = _read_readme_if_present(repo)
     existing_doc = _read_existing_unit_doc(repo, unit.slug)
@@ -488,6 +810,14 @@ def build_unit_context_bundle(
     if deps is not None and all_units is not None:
         neighbour_summaries = gather_neighbour_summaries(repo, unit, all_units, deps)
 
+    # Extract changed symbols from diffs (claw-code tokenization pattern)
+    all_symbols: list[str] = []
+    for _, diff_text in diffs:
+        all_symbols.extend(extract_changed_symbols(diff_text))
+
+    # Score existing doc sections against changed symbols (claw-code _score() pattern)
+    scored_doc_sections = score_doc_sections(existing_doc, all_symbols) if all_symbols else []
+
     return UnitContextBundle(
         unit_name=unit.name,
         unit_slug=unit.slug,
@@ -499,4 +829,7 @@ def build_unit_context_bundle(
         file_contents=selected,
         diffs=diffs,
         neighbour_summaries=neighbour_summaries,
+        repo_manifest=repo_manifest,
+        changed_symbols=all_symbols,
+        scored_doc_sections=scored_doc_sections,
     )

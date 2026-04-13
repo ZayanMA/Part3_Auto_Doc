@@ -29,6 +29,9 @@ from autodoc.context import (
     build_unit_context_bundle,
     apply_unit_overrides,
     estimate_tokens,
+    enrich_unit_names,
+    verify_units_relevance,
+    collapse_homogeneous_siblings,
 )
 from autodoc.repo_index import (
     load_index,
@@ -41,7 +44,8 @@ from autodoc.repo_index import (
 from autodoc.filters import get_all_relevant_files_git, get_all_relevant_files, is_probably_text_file
 from autodoc.git_utils import GitCommandError, ensure_git_repo, get_changed_files
 from autodoc.llm import generate_documentation, generate_repo_documentation
-from autodoc.models import DocumentationUnit
+from autodoc.manifest import build_repo_manifest, render_manifest
+from autodoc.models import DocumentationUnit, JobUsageSummary
 from autodoc.prompts import PROMPT_VERSION, build_repo_prompt, build_unit_prompt, build_unit_patch_prompt
 from autodoc.router import RoutingDecision, route_model
 
@@ -120,12 +124,18 @@ def generate(
     groups = merge_by_import_coupling(raw_groups, deps)
     groups = merge_small_groups(groups, min_files=cfg.min_files_per_unit)
 
-    # 9. Make units with kind detection
+    # 9. Make units with kind detection, then enrich names + filter relevance
     all_units = make_units_from_groups(groups)
+    all_units = enrich_unit_names(all_units, repo_path, cfg.fast_model)
+    all_units = verify_units_relevance(all_units, repo_path, cfg.fast_model)
 
     if not all_units:
         console.print("[yellow]No relevant units found.[/yellow]")
         raise typer.Exit(code=0)
+
+    # Build repo manifest once — injected into every unit prompt (claw-code PortManifest pattern)
+    repo_manifest_obj = build_repo_manifest(repo_path, all_units, all_paths)
+    repo_manifest_text = render_manifest(repo_manifest_obj)
 
     # 10. Determine changed files
     changed_files_set: set[str] = set()
@@ -186,6 +196,7 @@ def generate(
     summary.add_column("Doc")
 
     stats = SessionStats()
+    job_usage = JobUsageSummary()
     per_unit_markdown_paths: List[Tuple[str, Path]] = []
 
     units_dir = repo_path / AUTODOC_DIR / "units"
@@ -218,6 +229,7 @@ def generate(
                 token_budget=cfg.token_budget,
                 all_units=all_units,
                 deps=deps,
+                repo_manifest=repo_manifest_text,
             )
 
             # Route model + mode
@@ -256,6 +268,7 @@ def generate(
             if cache_exists(repo_path, cache_key):
                 md_path, _ = get_cache_paths(repo_path, cache_key)
                 stats.cached += 1
+                job_usage = job_usage.add_cached()
                 per_unit_markdown_paths.append((unit.name, md_path))
 
                 try:
@@ -297,6 +310,7 @@ def generate(
 
             stats.total_cost_usd += usage.estimated_cost_usd
             stats.total_tokens += usage.prompt_tokens + usage.completion_tokens
+            job_usage = job_usage.add(usage.prompt_tokens, usage.completion_tokens)
 
             per_unit_markdown_paths.append((unit.name, md_path))
 
@@ -369,6 +383,104 @@ def generate(
         f"cached={stats.cached}, "
         f"failed={stats.failed}"
         + (f", total_tokens={stats.total_tokens}, est_cost=${stats.total_cost_usd:.4f}" if costs else "")
+    )
+    console.print(
+        f"[dim]Job usage: in={job_usage.input_tokens} out={job_usage.output_tokens} "
+        f"units_processed={job_usage.units_processed} units_cached={job_usage.units_cached}[/dim]"
+    )
+
+
+@app.command()
+def evaluate(
+    repo: str = typer.Option(".", help="Path to the target repository"),
+    output: str = typer.Option("table", help="Output format: table or json"),
+    out: Optional[str] = typer.Option(None, "--out", help="Write JSON output to this file"),
+) -> None:
+    """Evaluate documentation quality for all generated units."""
+    import json as _json
+    from autodoc.quality import evaluate_unit, RepoQualityReport
+
+    repo_path = Path(repo).resolve()
+    units_dir = repo_path / AUTODOC_DIR / "units"
+
+    if not units_dir.exists():
+        console.print(f"[red]No units directory found at:[/red] {units_dir}")
+        raise typer.Exit(code=1)
+
+    # Load index.json for file lists
+    index_path = repo_path / AUTODOC_DIR / "index.json"
+    files_by_slug: dict[str, list[str]] = {}
+    if index_path.exists():
+        try:
+            idx = _json.loads(index_path.read_text(encoding="utf-8"))
+            for unit in idx.get("units", []):
+                files_by_slug[unit["slug"]] = unit.get("files", [])
+        except Exception:
+            pass
+
+    reports = []
+    for md_path in sorted(units_dir.glob("*.md")):
+        slug = md_path.stem
+        try:
+            markdown = md_path.read_text(encoding="utf-8")
+        except Exception:
+            continue
+        source_files = files_by_slug.get(slug, [])
+        report = evaluate_unit(slug, slug, "module", markdown, source_files, repo_path)
+        reports.append(report)
+
+    if not reports:
+        console.print("[yellow]No unit documentation found to evaluate.[/yellow]")
+        raise typer.Exit(code=0)
+
+    if output == "json" or out:
+        data = [r.__dict__ for r in reports]
+        json_str = _json.dumps(data, indent=2)
+        if out:
+            Path(out).write_text(json_str, encoding="utf-8")
+            console.print(f"[green]Quality scores written to:[/green] {out}")
+        else:
+            console.print(json_str)
+        return
+
+    # Rich table output
+    table = Table(title="Documentation Quality Scores")
+    table.add_column("Unit", style="bold")
+    table.add_column("Sections", justify="right")
+    table.add_column("Coverage", justify="right")
+    table.add_column("Hallucination", justify="right")
+    table.add_column("Words", justify="right")
+    table.add_column("Grade", justify="right")
+    table.add_column("Overall", justify="right")
+
+    for r in reports:
+        sections_str = f"{int(r.section_completeness * 6)}/6"
+        coverage_str = f"{r.technical_coverage:.0%}"
+        halluc_str = f"{r.hallucination_risk:.0%}"
+        words_str = str(r.content_density.get("word_count", 0))
+        grade_str = f"{r.readability_grade:.1f}"
+
+        score = r.overall_score
+        if score >= 0.75:
+            overall_str = f"[green]{score:.2f}[/green]"
+        elif score >= 0.5:
+            overall_str = f"[yellow]{score:.2f}[/yellow]"
+        else:
+            overall_str = f"[red]{score:.2f}[/red]"
+
+        table.add_row(r.slug, sections_str, coverage_str, halluc_str, words_str, grade_str, overall_str)
+
+    console.print(table)
+
+    n = len(reports)
+    avg_score = sum(r.overall_score for r in reports) / n
+    avg_coverage = sum(r.technical_coverage for r in reports) / n
+    avg_sections = sum(r.section_completeness for r in reports) / n
+    console.print(
+        f"\n[bold]Averages:[/bold] "
+        f"overall={avg_score:.2f}, "
+        f"sections={avg_sections:.0%}, "
+        f"coverage={avg_coverage:.0%}"
     )
 
 

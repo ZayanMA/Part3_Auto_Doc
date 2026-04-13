@@ -3,6 +3,7 @@ from __future__ import annotations
 from dotenv import load_dotenv
 load_dotenv()
 import os
+import re
 import time
 from typing import Any, Optional
 
@@ -122,6 +123,41 @@ def generate_documentation(
     text = _extract_text(resp_json)
     usage = _extract_usage(resp_json, model, prompt_text)
     return text.strip(), usage
+
+
+def call_llm_json(prompt: str, model: Optional[str] = None) -> dict | list | None:
+    """Call LLM expecting JSON response. Returns parsed object or None on failure."""
+    model = model or DEFAULT_MODEL_NAME
+
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": "Return valid JSON only. No markdown, no explanation."},
+            {"role": "user", "content": prompt},
+        ],
+        "temperature": 0.1,
+    }
+
+    headers = _build_headers()
+    try:
+        resp_json = _post_with_retry(payload, headers, timeout=60.0)
+        text = _extract_text(resp_json).strip()
+        # Try direct parse first
+        import json
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+        # Fallback: extract first JSON object/array from text
+        m = re.search(r'\{.*\}', text, re.DOTALL)
+        if m:
+            return json.loads(m.group())
+        m = re.search(r'\[.*\]', text, re.DOTALL)
+        if m:
+            return json.loads(m.group())
+        return None
+    except Exception:
+        return None
 
 
 def generate_repo_documentation(prompt_text: str, *, model: Optional[str] = None) -> str:
