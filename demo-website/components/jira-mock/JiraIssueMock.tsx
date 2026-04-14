@@ -4,12 +4,14 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { useDemoStore } from '@/lib/useDemoStore'
 import ConfluenceHierarchy from './ConfluenceHierarchy'
 import MarkdownRenderer from '../docs/MarkdownRenderer'
+import DiffViewer from '../docs/DiffViewer'
 
 interface PendingDoc {
   slug: string
   title: string
   kind: string
   markdown: string
+  prev_markdown?: string
   submittedAt: string
 }
 
@@ -39,6 +41,7 @@ export default function JiraIssueMock() {
       title: u.name,
       kind: u.kind,
       markdown: u.markdown,
+      prev_markdown: u.prev_markdown,
       submittedAt: new Date().toISOString(),
     })))
   }
@@ -170,6 +173,11 @@ export default function JiraIssueMock() {
                         <span className="text-xs font-semibold px-1.5 py-0.5 bg-[#EBECF0] text-[#172B4D] rounded uppercase">
                           {doc.kind}
                         </span>
+                        {doc.prev_markdown && (
+                          <span className="text-xs font-semibold px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded uppercase">
+                            patch
+                          </span>
+                        )}
                         <button
                           onClick={() => setExpandedSlug(isExpanded ? null : doc.slug)}
                           className="ml-auto text-xs text-[#0052CC] hover:underline flex items-center gap-1"
@@ -186,14 +194,20 @@ export default function JiraIssueMock() {
                             className="overflow-hidden"
                           >
                             <div className="max-h-64 overflow-y-auto border border-[#DFE1E6] rounded bg-white p-3 mb-2 text-xs">
-                              <MarkdownRenderer content={doc.markdown} />
+                              {doc.prev_markdown ? (
+                                <DiffViewer markdown={doc.markdown} prevMarkdown={doc.prev_markdown} defaultTab="diff" />
+                              ) : (
+                                <MarkdownRenderer content={doc.markdown} />
+                              )}
                             </div>
                           </motion.div>
                         )}
                       </AnimatePresence>
                       {!isExpanded && (
                         <p className="text-xs text-[#6B778C] font-mono mb-2 line-clamp-3">
-                          {doc.markdown.slice(0, 200)}{doc.markdown.length > 200 ? '…' : ''}
+                          {doc.prev_markdown
+                            ? `Patch: ${doc.markdown.split('\n').filter(Boolean).length} lines updated`
+                            : `${doc.markdown.slice(0, 200)}${doc.markdown.length > 200 ? '…' : ''}`}
                         </p>
                       )}
                       <p className="text-xs text-[#97A0AF] mb-2">

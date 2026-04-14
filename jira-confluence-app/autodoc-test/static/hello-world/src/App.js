@@ -78,6 +78,60 @@ const styles = {
   },
 };
 
+/** LCS-based line diff: returns array of {type, text} objects. */
+function computeDiff(prev, next) {
+  const a = prev.split('\n');
+  const b = next.split('\n');
+  const m = a.length, n = b.length;
+  const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = 1; i <= m; i++)
+    for (let j = 1; j <= n; j++)
+      dp[i][j] = a[i-1] === b[j-1] ? dp[i-1][j-1] + 1 : Math.max(dp[i-1][j], dp[i][j-1]);
+  const out = [];
+  let i = m, j = n;
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && a[i-1] === b[j-1]) { out.push({ type: 'unchanged', text: a[i-1] }); i--; j--; }
+    else if (j > 0 && (i === 0 || dp[i][j-1] >= dp[i-1][j])) { out.push({ type: 'added', text: b[j-1] }); j--; }
+    else { out.push({ type: 'removed', text: a[i-1] }); i--; }
+  }
+  return out.reverse();
+}
+
+/** Minimal diff renderer — shows only changed lines with +/- prefix. */
+function SimpleDiff({ markdown, prevMarkdown }) {
+  const lines = computeDiff(prevMarkdown, markdown);
+  const changed = lines.filter(l => l.type !== 'unchanged');
+  const added = lines.filter(l => l.type === 'added').length;
+  const removed = lines.filter(l => l.type === 'removed').length;
+  return (
+    <div>
+      <div style={{ fontSize: '11px', color: '#6B778C', marginBottom: '6px' }}>
+        <span style={{ color: '#006644', fontWeight: 600 }}>+{added}</span>
+        {' / '}
+        <span style={{ color: '#BF2600', fontWeight: 600 }}>-{removed}</span>
+        {' lines changed'}
+      </div>
+      <pre style={{
+        fontFamily: 'monospace', fontSize: '11px', lineHeight: '1.5',
+        background: '#FAFBFC', border: '1px solid #DFE1E6', borderRadius: '3px',
+        padding: '6px', overflowX: 'auto', whiteSpace: 'pre-wrap', margin: 0,
+      }}>
+        {changed.map((line, idx) => (
+          <div key={idx} style={{
+            background: line.type === 'added' ? '#E3FCEF' : '#FFEBE6',
+            color: line.type === 'added' ? '#006644' : '#BF2600',
+          }}>
+            <span style={{ userSelect: 'none', display: 'inline-block', width: '12px', textAlign: 'center', marginRight: '6px' }}>
+              {line.type === 'added' ? '+' : '-'}
+            </span>
+            {line.text}
+          </div>
+        ))}
+      </pre>
+    </div>
+  );
+}
+
 /** Convert inline markdown (bold, italic, inline code) to React elements. */
 function renderInline(text, keyPrefix) {
   const parts = [];
@@ -310,17 +364,26 @@ function App() {
                   <div style={styles.pendingHeader}>
                     <strong>{doc.title}</strong>
                     <span style={{ ...styles.kindBadge, ...getKindStyle(doc.unitKind) }}>{doc.unitKind}</span>
+                    {doc.prev_markdown && (
+                      <span style={{ ...styles.kindBadge, background: '#DEEBFF', color: '#0747A6' }}>PATCH</span>
+                    )}
                     <button style={styles.toggleBtn} onClick={() => toggleExpand(doc.slug)}>
                       {isExpanded ? 'Preview ▲' : 'Preview ▼'}
                     </button>
                   </div>
                   {isExpanded ? (
                     <div style={styles.previewPanel}>
-                      <SimpleMarkdown content={doc.markdown} />
+                      {doc.prev_markdown ? (
+                        <SimpleDiff markdown={doc.markdown} prevMarkdown={doc.prev_markdown} />
+                      ) : (
+                        <SimpleMarkdown content={doc.markdown} />
+                      )}
                     </div>
                   ) : (
                     <div style={styles.preview}>
-                      {(doc.markdown || '').slice(0, 200)}{doc.markdown && doc.markdown.length > 200 ? '…' : ''}
+                      {doc.prev_markdown
+                        ? `Patch: ${(doc.markdown || '').split('\n').filter(Boolean).length} lines updated`
+                        : `${(doc.markdown || '').slice(0, 200)}${doc.markdown && doc.markdown.length > 200 ? '…' : ''}`}
                     </div>
                   )}
                   <div style={styles.timestamp}>
