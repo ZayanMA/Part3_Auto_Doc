@@ -532,10 +532,10 @@ def _run_processing(
             except Exception:
                 pass
 
-            is_patch_unit = (status_label == "patch") or (
-                mock_generation and bool(bundle.diffs) and bool(bundle.existing_unit_doc.strip())
-            )
-            prev_md = bundle.existing_unit_doc if is_patch_unit and bundle.existing_unit_doc.strip() else None
+            # Show diff whenever there are diffs AND an existing doc — regardless
+            # of whether the LLM used patch or full mode (preseed may have failed
+            # silently, routing may have upgraded to "full" on complexity).
+            prev_md = bundle.existing_unit_doc if bundle.diffs and bundle.existing_unit_doc.strip() else None
             unit_result = UnitResult(
                 slug=unit.slug, name=unit.name, kind=unit.kind,
                 markdown=markdown, status=status_label,
@@ -754,11 +754,12 @@ def run_generate_job(job_id: str, req: GenerateRequest) -> None:
             shutil.rmtree(tmpdir, ignore_errors=True)
 
 
-def _preseed_unit_docs(repo_path, base_ref: str, mock_generation: bool) -> None:
-    """Silently generate full documentation for all units at the current checkout.
+def _preseed_unit_docs(repo_path, base_ref: str, mock_generation: bool, changed_files: Optional[set] = None) -> None:
+    """Silently generate full documentation at the current checkout (base commit).
 
-    Writes .autodoc/units/{slug}.md into the repo working tree so that the
-    subsequent patch run finds existing_unit_doc populated, enabling
+    If changed_files is provided, only units that overlap with those paths are
+    seeded — much faster for real LLM runs.  Writes .autodoc/units/{slug}.md so
+    that the subsequent patch run finds existing_unit_doc populated, enabling
     prev_markdown / diff view in the frontend.  Best-effort — failures are
     swallowed so the patch job can still proceed without diffs.
     """
@@ -802,6 +803,9 @@ def _preseed_unit_docs(repo_path, base_ref: str, mock_generation: bool) -> None:
         units_dir.mkdir(parents=True, exist_ok=True)
 
         for unit in all_units:
+            # If caller gave us a changed-file set, only preseed units that overlap.
+            if changed_files and not any(f in changed_files for f in unit.files):
+                continue
             try:
                 bundle = build_unit_context_bundle(
                     repo_path,
@@ -839,12 +843,25 @@ def run_demo_generate_job(job_id: str, req: DemoGenerateRequest) -> None:
         if not req.all_files:
             # Patch mode: silently generate full docs at the base commit first so
             # _run_processing finds existing .autodoc/units/*.md → prev_markdown populated.
+            # First compute which files changed so we only preseed those units (not all).
+            changed_files_for_preseed: set[str] = set()
+            try:
+                result = subprocess.run(
+                    ["git", "diff", "--name-only", req.base, req.head],
+                    cwd=tmpdir, capture_output=True, text=True, check=True,
+                )
+                changed_files_for_preseed = {
+                    line.strip() for line in result.stdout.splitlines() if line.strip()
+                }
+            except Exception:
+                pass  # fall back to seeding all units
+
             _set_job_phase(job_id, "seeding_base", "Preparing base documentation for comparison…")
             subprocess.run(
                 ["git", "checkout", req.base],
                 cwd=tmpdir, check=True, capture_output=True,
             )
-            _preseed_unit_docs(repo_path, req.base, req.mock_generation)
+            _preseed_unit_docs(repo_path, req.base, req.mock_generation, changed_files_for_preseed or None)
             subprocess.run(
                 ["git", "checkout", req.head],
                 cwd=tmpdir, check=True, capture_output=True,
