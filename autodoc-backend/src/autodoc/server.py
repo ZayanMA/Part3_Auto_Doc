@@ -532,7 +532,10 @@ def _run_processing(
             except Exception:
                 pass
 
-            prev_md = bundle.existing_unit_doc if status_label == "patch" and bundle.existing_unit_doc.strip() else None
+            is_patch_unit = (status_label == "patch") or (
+                mock_generation and bool(bundle.diffs) and bool(bundle.existing_unit_doc.strip())
+            )
+            prev_md = bundle.existing_unit_doc if is_patch_unit and bundle.existing_unit_doc.strip() else None
             unit_result = UnitResult(
                 slug=unit.slug, name=unit.name, kind=unit.kind,
                 markdown=markdown, status=status_label,
@@ -816,7 +819,7 @@ def _preseed_unit_docs(repo_path, base_ref: str, mock_generation: bool) -> None:
                     md = _build_mock_markdown(unit.name, unit.slug, unit.kind, unit.files)
                 else:
                     prompt = build_unit_prompt(bundle)
-                    md, _ = generate_documentation(prompt, model=cfg.fast_model)
+                    md, _ = generate_documentation(prompt, unit.slug, model=cfg.fast_model)
                 (units_dir / f"{unit.slug}.md").write_text(md, encoding="utf-8")
             except Exception:
                 pass  # skip individual unit failures silently

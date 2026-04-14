@@ -77,6 +77,12 @@ export default function DocsViewer() {
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-6">
+        {selected?.prev_markdown && (
+          <div className="mb-4 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 text-sm text-blue-800 flex items-center gap-2">
+            <span className="font-semibold">Patch update</span>
+            <span className="text-blue-600">— showing what changed from the base documentation. Switch to Before / After tabs to see the full versions.</span>
+          </div>
+        )}
         {hasFormatWarning && (
           <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
             This documentation is missing some expected sections:
@@ -86,7 +92,7 @@ export default function DocsViewer() {
         )}
         {selected ? (
           selected.prev_markdown ? (
-            <DiffViewer markdown={selected.markdown} prevMarkdown={selected.prev_markdown} />
+            <DiffViewer markdown={selected.markdown} prevMarkdown={selected.prev_markdown} defaultTab="diff" />
           ) : (
             <MarkdownRenderer content={selected.markdown} />
           )
