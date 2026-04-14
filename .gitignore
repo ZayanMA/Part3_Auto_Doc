@@ -8,6 +8,7 @@ secrets/
 credentials/
 *.pem
 *.key
+graphify-out/
 
 # Python
 __pycache__/
