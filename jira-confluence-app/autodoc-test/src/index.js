@@ -182,6 +182,7 @@ export const webhookHandler = async (event) => {
           slug: unit.slug,
           title: unit.title || unit.slug,
           markdown: unit.markdown,
+          prev_markdown: unit.prev_markdown || null,
           unitKind: unit.kind || 'module',
           confluenceSpaceKey,
           repoName: repoName || 'Repository',

@@ -48,6 +48,18 @@ export default function GitUrlForm() {
           placeholder="https://github.com/owner/repo"
           className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
         />
+        <button
+          type="button"
+          onClick={() => {
+            setUrl('https://github.com/microsoft/markitdown')
+            setMode('patch')
+            setBase('HEAD~1')
+            setHead('HEAD')
+          }}
+          className="mt-1.5 text-xs text-blue-600 hover:underline"
+        >
+          Try example: markitdown (patch mode)
+        </button>
       </div>
       <div>
         <label className="block text-sm font-medium text-gray-700 mb-1">

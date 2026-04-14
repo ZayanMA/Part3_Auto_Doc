@@ -5,6 +5,7 @@ import MarkdownRenderer from './MarkdownRenderer'
 interface DiffViewerProps {
   markdown: string
   prevMarkdown: string
+  defaultTab?: 'after' | 'before' | 'diff'
 }
 
 type DiffLine = { type: 'added' | 'removed' | 'unchanged'; text: string }
@@ -37,8 +38,8 @@ function computeDiff(prev: string, next: string): DiffLine[] {
   return out.reverse()
 }
 
-export default function DiffViewer({ markdown, prevMarkdown }: DiffViewerProps) {
-  const [tab, setTab] = useState<'after' | 'before' | 'diff'>('after')
+export default function DiffViewer({ markdown, prevMarkdown, defaultTab = 'after' }: DiffViewerProps) {
+  const [tab, setTab] = useState<'after' | 'before' | 'diff'>(defaultTab)
 
   const diffLines = tab === 'diff' ? computeDiff(prevMarkdown, markdown) : []
 

@@ -112,7 +112,7 @@ export default function DemoPage() {
               <p className="text-gray-500 mt-2">Point AutoDoc at any Git repository or upload a ZIP to see it in action</p>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
+            <div className="grid grid-cols-1 gap-8 items-start">
               <div className="space-y-4">
                 <InputPanel />
                 {(phase === 'running' || phase === 'patch-running') && (
@@ -128,16 +128,14 @@ export default function DemoPage() {
                   </div>
                 )}
               </div>
-
-              <div className="space-y-4">
-                {!isDone && phase !== 'running' && (
-                  <div className="bg-white border-2 border-dashed border-gray-200 rounded-xl p-8 text-center text-gray-400">
-                    <div className="text-4xl mb-3">📄</div>
-                    <p>Documentation will appear here after generation</p>
-                  </div>
-                )}
-              </div>
             </div>
+
+            {phase === 'idle' && (
+              <div className="mt-8 bg-white border-2 border-dashed border-gray-200 rounded-xl p-8 text-center text-gray-400">
+                <div className="text-4xl mb-3">📄</div>
+                <p>Documentation will appear here after generation</p>
+              </div>
+            )}
 
             {isFailed && (
               <div className="mt-8 rounded-xl border border-red-200 bg-red-50 p-5">
