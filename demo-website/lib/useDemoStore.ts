@@ -100,7 +100,7 @@ export const useDemoStore = create<DemoState>((set) => ({
     errorMessage: null,
     units,
     repoDoc,
-    selectedUnitSlug: repoDoc ? '__repo__' : (units.length > 0 ? units[0].slug : null),
+    selectedUnitSlug: units.length > 0 ? units[0].slug : null,
   })),
 
   setFailed: (error, units = []) => set({
