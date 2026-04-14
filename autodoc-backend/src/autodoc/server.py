@@ -629,10 +629,12 @@ def _run_processing(
         if mock_generation:
             repo_markdown = _build_mock_repo_doc(repo_path.name, unit_results)
         else:
+            unit_index = [(u.name, u.slug) for u in unit_results]
             repo_prompt = build_repo_prompt(
                 repo_name=repo_path.name,
                 readme_content=repo_readme,
                 file_docs=unit_docs,
+                unit_index=unit_index,
             )
             repo_markdown = generate_repo_documentation(repo_prompt, model=cfg.smart_model)
         repo_doc_path = repo_path / AUTODOC_DIR / "REPOSITORY.md"

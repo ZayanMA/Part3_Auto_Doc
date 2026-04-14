@@ -355,10 +355,12 @@ def generate(
         unit_docs.append((p.stem, content))
 
     if unit_docs:
+        unit_index = [(u.name, u.slug) for u in units]
         repo_prompt = build_repo_prompt(
             repo_name=repo_path.name,
             readme_content=repo_readme,
             file_docs=unit_docs,
+            unit_index=unit_index,
         )
 
         if debug:

@@ -85,6 +85,7 @@ Then write the documentation. Do not include your reasoning in the output.
   ## Dependencies
   ## Usage Notes
 - Start with a single H1 title line only if needed; all required content sections must be H2 headings exactly as listed above.
+- In `## Overview`, describe ONLY this unit's specific scope, role, and boundaries within the system. Do NOT write a repository or project-level summary — that belongs in REPOSITORY.md.
 - Put a blank line after every heading and before every list or code block.
 - Keep paragraphs short; prefer bullets over dense prose.
 - In `## Key APIs & Interfaces`, list each important API/interface as its own bullet with a short explanation and file citation.
@@ -170,6 +171,7 @@ def build_repo_prompt(
     repo_name: str,
     readme_content: str,
     file_docs: list[tuple[str, str]],
+    unit_index: list[tuple[str, str]] | None = None,
 ) -> str:
     unit_sections: list[str] = []
     for name, doc in file_docs:
@@ -177,19 +179,28 @@ def build_repo_prompt(
 
     units_text = "\n".join(unit_sections)
 
+    # Build a reference list so the LLM knows exact link targets
+    if unit_index:
+        link_lines = "\n".join(
+            f"- [{name}](units/{slug}.md)" for name, slug in unit_index
+        )
+        unit_links_section = f"\nAvailable unit documentation files (use these exact paths for markdown links):\n{link_lines}\n"
+    else:
+        unit_links_section = ""
+
     return f"""Write a repository overview for "{repo_name}" with these required sections:
 
 ## What This Does
 (2–3 sentences: purpose and problem solved)
 
 ## Architecture Overview
-(How the main components fit together — reference component names from the unit docs)
+(How the main components fit together — link each component using its markdown link from the list below)
 
 ## Key Entry Points
 (How to start using or running this system — CLI commands, API endpoints, scripts)
 
 ## Component Map
-(Brief one-line description of each major component)
+(One line per component — use markdown links: [Component Name](units/slug.md))
 
 ## Getting Started
 (Minimal steps for a new contributor to run locally)
@@ -201,7 +212,7 @@ Keep the Markdown visually clean:
 - blank lines between headings and lists
 - no giant walls of text
 - output Markdown only
-
+{unit_links_section}
 Existing repository README (if any):
 {readme_content}
 
