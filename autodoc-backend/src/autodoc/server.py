@@ -751,6 +751,79 @@ def run_generate_job(job_id: str, req: GenerateRequest) -> None:
             shutil.rmtree(tmpdir, ignore_errors=True)
 
 
+def _preseed_unit_docs(repo_path, base_ref: str, mock_generation: bool) -> None:
+    """Silently generate full documentation for all units at the current checkout.
+
+    Writes .autodoc/units/{slug}.md into the repo working tree so that the
+    subsequent patch run finds existing_unit_doc populated, enabling
+    prev_markdown / diff view in the frontend.  Best-effort — failures are
+    swallowed so the patch job can still proceed without diffs.
+    """
+    try:
+        from pathlib import Path as _Path
+        from autodoc.cache import AUTODOC_DIR
+        from autodoc.config import load_config
+        from autodoc.context import (
+            build_unit_context_bundle,
+            group_files_into_units,
+            apply_unit_overrides,
+            collapse_homogeneous_siblings,
+            merge_by_import_coupling,
+            merge_small_groups,
+            make_units_from_groups,
+        )
+        from autodoc.filters import get_all_relevant_files_git
+        from autodoc.repo_index import build_import_graph
+        from autodoc.llm import generate_documentation
+        from autodoc.prompts import build_unit_prompt
+
+        cfg = load_config(repo_path)
+        all_candidates = get_all_relevant_files_git(repo_path)
+        all_paths = [c.path for c in all_candidates]
+
+        raw_groups = group_files_into_units(all_paths)
+        raw_groups = apply_unit_overrides(raw_groups, cfg.unit_overrides, all_paths)
+        raw_groups = collapse_homogeneous_siblings(raw_groups)
+
+        try:
+            _, resolved = build_import_graph(repo_path, all_paths)
+            deps: dict = {k: set(v) for k, v in resolved.items()}
+        except Exception:
+            deps = {}
+
+        groups = merge_by_import_coupling(raw_groups, deps)
+        groups = merge_small_groups(groups, min_files=cfg.min_files_per_unit)
+        all_units = make_units_from_groups(groups)
+
+        units_dir = repo_path / AUTODOC_DIR / "units"
+        units_dir.mkdir(parents=True, exist_ok=True)
+
+        for unit in all_units:
+            try:
+                bundle = build_unit_context_bundle(
+                    repo_path,
+                    base_ref,
+                    base_ref,
+                    unit,
+                    include_diff=False,
+                    changed_files=set(all_paths),
+                    max_file_chars=cfg.max_file_chars,
+                    max_files_fulltext=cfg.max_files_fulltext,
+                    all_units=all_units,
+                    deps=deps,
+                )
+                if mock_generation:
+                    md = _build_mock_markdown(unit.name, unit.slug, unit.kind, unit.files)
+                else:
+                    prompt = build_unit_prompt(bundle)
+                    md, _ = generate_documentation(prompt, model=cfg.fast_model)
+                (units_dir / f"{unit.slug}.md").write_text(md, encoding="utf-8")
+            except Exception:
+                pass  # skip individual unit failures silently
+    except Exception:
+        pass  # if the whole preseed fails the patch job still runs, just without prev_markdown
+
+
 def run_demo_generate_job(job_id: str, req: DemoGenerateRequest) -> None:
     _set_job(job_id, status=JobStatus.RUNNING, phase="cloning", phase_message="Cloning repository")
     tmpdir: Optional[str] = None
@@ -759,6 +832,21 @@ def run_demo_generate_job(job_id: str, req: DemoGenerateRequest) -> None:
         tmpdir = tempfile.mkdtemp(prefix="autodoc_demo_")
         _clone_repo_url(req.git_url, req.git_token, tmpdir)
         repo_path = Path(tmpdir)
+
+        if not req.all_files:
+            # Patch mode: silently generate full docs at the base commit first so
+            # _run_processing finds existing .autodoc/units/*.md → prev_markdown populated.
+            _set_job_phase(job_id, "seeding_base", "Preparing base documentation for comparison…")
+            subprocess.run(
+                ["git", "checkout", req.base],
+                cwd=tmpdir, check=True, capture_output=True,
+            )
+            _preseed_unit_docs(repo_path, req.base, req.mock_generation)
+            subprocess.run(
+                ["git", "checkout", req.head],
+                cwd=tmpdir, check=True, capture_output=True,
+            )
+
         _run_processing(
             job_id,
             repo_path,

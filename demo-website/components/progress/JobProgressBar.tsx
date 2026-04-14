@@ -21,6 +21,8 @@ export default function JobProgressBar() {
 
   function phaseLabel(rawPhase: string | null | undefined): string {
     switch (rawPhase) {
+      case 'seeding_base':
+        return 'Preparing base documentation for comparison…'
       case 'cloning':
         return 'Cloning repository'
       case 'extracting':

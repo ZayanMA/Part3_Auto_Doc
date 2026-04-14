@@ -198,29 +198,31 @@ export default function DemoPage() {
           <div className="max-w-4xl mx-auto">
             <div className="text-center mb-10">
               <h2 className="text-3xl font-bold text-gray-900">How It Works</h2>
-              <p className="text-gray-500 mt-2">AutoDoc fits into your existing workflow with minimal setup</p>
+              <p className="text-gray-500 mt-2">
+                AutoDoc is an end-to-end automated documentation pipeline — from code change to published Confluence page
+              </p>
             </div>
 
-            {/* Three value cards */}
+            {/* Three architecture cards */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               {[
                 {
-                  title: 'Triggered by your CI',
+                  title: 'CI-Integrated Pipeline',
                   icon: '🔁',
-                  desc: 'Add one line to your GitHub Actions workflow. Every time a PR is merged, AutoDoc runs automatically — or trigger it manually from this demo.',
-                  tags: ['GitHub Actions', 'Zero config', 'Always up to date'],
+                  desc: 'AutoDoc runs as a reusable GitHub Actions workflow. On PR merge, the workflow calls the FastAPI backend with the repository URL and commit range, then polls until the documentation job completes.',
+                  tags: ['GitHub Actions', 'FastAPI', 'Reusable workflow'],
                 },
                 {
-                  title: 'Understands your codebase',
+                  title: 'Import Graph & Unit Clustering',
                   icon: '🧠',
-                  desc: 'AutoDoc groups related files into logical documentation units based on how they import each other, then writes structured docs per unit using an LLM. Unchanged units are cached and skipped.',
-                  tags: ['Smart grouping', 'LLM-powered', 'Cached'],
+                  desc: 'The backend builds a language-aware import graph of the repository and clusters related files into logical documentation units. Each unit is sent to an LLM independently. Units with no file changes are served from a content-addressed cache.',
+                  tags: ['Import graph', 'Unit clustering', 'LLM', 'Content cache'],
                 },
                 {
-                  title: 'Human review, then publish',
-                  icon: '✅',
-                  desc: 'Generated docs appear in a Jira panel for your team to review before anything is published. Approve a doc and it goes straight to Confluence. Patch runs show only what changed.',
-                  tags: ['Jira', 'Confluence', 'Diff view'],
+                  title: 'Jira Review & Confluence Publish',
+                  icon: '🧩',
+                  desc: 'Generated docs are signed and delivered to an Atlassian Forge app via webhook. They surface as a pending review panel inside the linked Jira issue. Once approved, each document is published into a structured Confluence page hierarchy.',
+                  tags: ['Atlassian Forge', 'Jira panel', 'Confluence'],
                 },
               ].map((card) => (
                 <div key={card.title} className="border border-gray-200 rounded-xl p-6 hover:shadow-md transition-shadow">
@@ -238,15 +240,15 @@ export default function DemoPage() {
 
             {/* Numbered steps */}
             <div className="mt-12 bg-gray-50 rounded-xl p-8">
-              <h3 className="text-center font-semibold text-gray-700 mb-8">Step by step</h3>
+              <h3 className="text-center font-semibold text-gray-700 mb-8">End-to-end flow</h3>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {[
-                  { n: 1, title: 'PR merged',          desc: 'Your CI triggers AutoDoc automatically on every merge.' },
-                  { n: 2, title: 'Repo cloned',        desc: 'The backend fetches your code and identifies what changed.' },
-                  { n: 3, title: 'Smart grouping',     desc: 'Related files are clustered into logical units by how they depend on each other.' },
-                  { n: 4, title: 'LLM writes docs',    desc: 'One focused documentation page is generated per unit. Unchanged units are skipped.' },
-                  { n: 5, title: 'Jira review panel',  desc: 'Your team sees the new docs — and any diffs — inside the Jira issue for that PR.' },
-                  { n: 6, title: 'Published',          desc: 'Approved docs are pushed to Confluence automatically, organised by kind.' },
+                  { n: 1, title: 'PR merged',              desc: 'GitHub Actions triggers the AutoDoc workflow, passing the repo URL and the base/head commit range.' },
+                  { n: 2, title: 'Repo cloned & diffed',   desc: 'The backend clones the repository and identifies which files changed between the two commits.' },
+                  { n: 3, title: 'Import graph built',     desc: 'Files are analysed for import dependencies and clustered into cohesive documentation units.' },
+                  { n: 4, title: 'LLM generates per unit', desc: 'Each changed unit is sent to an LLM with its full source context. Units unchanged since the last run are returned from cache.' },
+                  { n: 5, title: 'Signed & delivered',     desc: 'The backend HMAC-signs the payload and posts it to the Forge app webhook, ensuring authenticity.' },
+                  { n: 6, title: 'Reviewed & published',   desc: 'Docs appear in the Jira issue panel as pending. A reviewer approves each one, publishing it to the Confluence page hierarchy.' },
                 ].map(({ n, title, desc }) => (
                   <div key={n} className="flex gap-4 items-start bg-white rounded-lg border border-gray-200 px-4 py-3">
                     <span className="flex-shrink-0 w-7 h-7 rounded-full bg-blue-600 text-white text-sm font-bold flex items-center justify-center">
