@@ -31,9 +31,7 @@ export default function DocsViewer() {
 
   if (phase !== 'done' && phase !== 'patch-done' && phase !== 'patch-running') return null
 
-  const allUnits = repoDoc
-    ? [{ slug: '__repo__', name: 'Repository Overview', kind: 'overview', markdown: repoDoc, status: 'full' }, ...units]
-    : units
+  const allUnits = units
 
   const selected = allUnits.find((u) => u.slug === selectedUnitSlug) ?? allUnits[0]
   const missingSections = selected?.quality?.missing_sections ?? []

@@ -97,12 +97,39 @@ function computeDiff(prev, next) {
   return out.reverse();
 }
 
-/** Minimal diff renderer — shows only changed lines with +/- prefix. */
+/** Collapse unchanged runs into markers, leaving ctx lines of context around changes. */
+function collapseForDisplay(diffLines, ctx = 3) {
+  const interesting = new Set();
+  diffLines.forEach((l, i) => {
+    if (l.type !== 'unchanged') {
+      for (let k = Math.max(0, i - ctx); k <= Math.min(diffLines.length - 1, i + ctx); k++)
+        interesting.add(k);
+    }
+  });
+  const blocks = [];
+  let i = 0;
+  while (i < diffLines.length) {
+    if (interesting.has(i)) {
+      const chunk = [];
+      while (i < diffLines.length && interesting.has(i)) chunk.push(diffLines[i++]);
+      blocks.push({ kind: 'lines', lines: chunk });
+    } else {
+      let count = 0;
+      while (i < diffLines.length && !interesting.has(i)) { count++; i++; }
+      blocks.push({ kind: 'collapse', count });
+    }
+  }
+  return blocks;
+}
+
+/** Diff renderer — shows changed lines + 3-line context, collapses unchanged runs. */
 function SimpleDiff({ markdown, prevMarkdown }) {
   const lines = computeDiff(prevMarkdown, markdown);
-  const changed = lines.filter(l => l.type !== 'unchanged');
   const added = lines.filter(l => l.type === 'added').length;
   const removed = lines.filter(l => l.type === 'removed').length;
+  const hasChanges = added > 0 || removed > 0;
+  const blocks = collapseForDisplay(lines);
+
   return (
     <div>
       <div style={{ fontSize: '11px', color: '#6B778C', marginBottom: '6px' }}>
@@ -111,23 +138,39 @@ function SimpleDiff({ markdown, prevMarkdown }) {
         <span style={{ color: '#BF2600', fontWeight: 600 }}>-{removed}</span>
         {' lines changed'}
       </div>
-      <pre style={{
-        fontFamily: 'monospace', fontSize: '11px', lineHeight: '1.5',
-        background: '#FAFBFC', border: '1px solid #DFE1E6', borderRadius: '3px',
-        padding: '6px', overflowX: 'auto', whiteSpace: 'pre-wrap', margin: 0,
-      }}>
-        {changed.map((line, idx) => (
-          <div key={idx} style={{
-            background: line.type === 'added' ? '#E3FCEF' : '#FFEBE6',
-            color: line.type === 'added' ? '#006644' : '#BF2600',
-          }}>
-            <span style={{ userSelect: 'none', display: 'inline-block', width: '12px', textAlign: 'center', marginRight: '6px' }}>
-              {line.type === 'added' ? '+' : '-'}
-            </span>
-            {line.text}
-          </div>
-        ))}
-      </pre>
+      {!hasChanges ? (
+        <div style={{ fontSize: '11px', color: '#6B778C', fontStyle: 'italic' }}>No changes detected</div>
+      ) : (
+        <pre style={{
+          fontFamily: 'monospace', fontSize: '11px', lineHeight: '1.5',
+          background: '#FAFBFC', border: '1px solid #DFE1E6', borderRadius: '3px',
+          padding: '6px', overflowX: 'auto', whiteSpace: 'pre-wrap', margin: 0,
+        }}>
+          {blocks.map((block, bi) =>
+            block.kind === 'collapse' ? (
+              <div key={bi} style={{
+                textAlign: 'center', color: '#97A0AF', background: '#F4F5F7',
+                borderTop: '1px solid #DFE1E6', borderBottom: '1px solid #DFE1E6',
+                padding: '2px 0', userSelect: 'none', fontSize: '10px',
+              }}>
+                ↕ {block.count} unchanged line{block.count !== 1 ? 's' : ''}
+              </div>
+            ) : (
+              block.lines.map((line, li) => (
+                <div key={`${bi}-${li}`} style={{
+                  background: line.type === 'added' ? '#E3FCEF' : line.type === 'removed' ? '#FFEBE6' : 'transparent',
+                  color: line.type === 'added' ? '#006644' : line.type === 'removed' ? '#BF2600' : '#172B4D',
+                }}>
+                  <span style={{ userSelect: 'none', display: 'inline-block', width: '12px', textAlign: 'center', marginRight: '6px', color: line.type === 'added' ? '#006644' : line.type === 'removed' ? '#BF2600' : '#DFE1E6' }}>
+                    {line.type === 'added' ? '+' : line.type === 'removed' ? '-' : ' '}
+                  </span>
+                  {line.text}
+                </div>
+              ))
+            )
+          )}
+        </pre>
+      )}
     </div>
   );
 }
@@ -355,17 +398,30 @@ function App() {
               const isActioning = pendingAction === doc.slug;
               const isExpanded = expandedSlug === doc.slug;
               const isFlashing = justApproved.has(doc.slug);
+              const patchLines = doc.prev_markdown ? computeDiff(doc.prev_markdown, doc.markdown) : null;
+              const patchCounts = patchLines ? {
+                added: patchLines.filter(l => l.type === 'added').length,
+                removed: patchLines.filter(l => l.type === 'removed').length,
+              } : null;
               const cardStyle = {
                 ...styles.pendingCard,
                 ...(isFlashing ? { background: '#E3FCEF', borderColor: '#36B37E' } : {}),
+                ...(patchCounts ? { borderLeft: '4px solid #0052CC' } : {}),
               };
               return (
                 <div key={doc.slug} style={cardStyle}>
                   <div style={styles.pendingHeader}>
                     <strong>{doc.title}</strong>
                     <span style={{ ...styles.kindBadge, ...getKindStyle(doc.unitKind) }}>{doc.unitKind}</span>
-                    {doc.prev_markdown && (
+                    {patchCounts && (
                       <span style={{ ...styles.kindBadge, background: '#DEEBFF', color: '#0747A6' }}>PATCH</span>
+                    )}
+                    {patchCounts && (
+                      <span style={{ fontFamily: 'monospace', fontSize: '12px' }}>
+                        <span style={{ color: '#006644', fontWeight: 600 }}>+{patchCounts.added}</span>
+                        {' '}
+                        <span style={{ color: '#BF2600', fontWeight: 600 }}>-{patchCounts.removed}</span>
+                      </span>
                     )}
                     <button style={styles.toggleBtn} onClick={() => toggleExpand(doc.slug)}>
                       {isExpanded ? 'Preview ▲' : 'Preview ▼'}
@@ -381,8 +437,8 @@ function App() {
                     </div>
                   ) : (
                     <div style={styles.preview}>
-                      {doc.prev_markdown
-                        ? `Patch: ${(doc.markdown || '').split('\n').filter(Boolean).length} lines updated`
+                      {patchCounts
+                        ? `+${patchCounts.added} added · -${patchCounts.removed} removed`
                         : `${(doc.markdown || '').slice(0, 200)}${doc.markdown && doc.markdown.length > 200 ? '…' : ''}`}
                     </div>
                   )}

@@ -5,6 +5,7 @@ import { useDemoStore } from '@/lib/useDemoStore'
 import ConfluenceHierarchy from './ConfluenceHierarchy'
 import MarkdownRenderer from '../docs/MarkdownRenderer'
 import DiffViewer from '../docs/DiffViewer'
+import { computeDiff } from '@/lib/diffUtils'
 
 interface PendingDoc {
   slug: string
@@ -22,6 +23,14 @@ interface LiveDoc {
   markdown: string
 }
 
+function diffCounts(prev: string, next: string) {
+  const lines = computeDiff(prev, next)
+  return {
+    added: lines.filter((l) => l.type === 'added').length,
+    removed: lines.filter((l) => l.type === 'removed').length,
+  }
+}
+
 export default function JiraIssueMock() {
   const { units, repoName, phase } = useDemoStore()
   const [tab, setTab] = useState<'pending' | 'live'>('pending')
@@ -31,7 +40,6 @@ export default function JiraIssueMock() {
   const [actioning, setActioning] = useState<string | null>(null)
   const [expandedSlug, setExpandedSlug] = useState<string | null>(null)
 
-  // Sync pending docs from units when they change
   const initialised = pending.length > 0 || live.length > 0
   const hasUnits = units.length > 0
 
@@ -166,16 +174,31 @@ export default function JiraIssueMock() {
                 {pending.map((doc) => {
                   const isActioning = actioning === doc.slug
                   const isExpanded = expandedSlug === doc.slug
+                  const counts = doc.prev_markdown ? diffCounts(doc.prev_markdown, doc.markdown) : null
                   return (
-                    <div key={doc.slug} className="border border-[#DFE1E6] rounded p-3 bg-[#FAFBFC]">
+                    <div
+                      key={doc.slug}
+                      className={`rounded p-3 bg-[#FAFBFC] ${
+                        counts
+                          ? 'border border-[#DFE1E6] border-l-4 border-l-blue-500'
+                          : 'border border-[#DFE1E6]'
+                      }`}
+                    >
                       <div className="flex items-center gap-2 mb-1.5">
                         <strong className="text-sm text-[#172B4D]">{doc.title}</strong>
                         <span className="text-xs font-semibold px-1.5 py-0.5 bg-[#EBECF0] text-[#172B4D] rounded uppercase">
                           {doc.kind}
                         </span>
-                        {doc.prev_markdown && (
+                        {counts && (
                           <span className="text-xs font-semibold px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded uppercase">
                             patch
+                          </span>
+                        )}
+                        {counts && (
+                          <span className="text-xs font-mono">
+                            <span className="text-green-700 font-semibold">+{counts.added}</span>
+                            {' '}
+                            <span className="text-red-700 font-semibold">-{counts.removed}</span>
                           </span>
                         )}
                         <button
@@ -205,8 +228,8 @@ export default function JiraIssueMock() {
                       </AnimatePresence>
                       {!isExpanded && (
                         <p className="text-xs text-[#6B778C] font-mono mb-2 line-clamp-3">
-                          {doc.prev_markdown
-                            ? `Patch: ${doc.markdown.split('\n').filter(Boolean).length} lines updated`
+                          {counts
+                            ? `+${counts.added} added · -${counts.removed} removed`
                             : `${doc.markdown.slice(0, 200)}${doc.markdown.length > 200 ? '…' : ''}`}
                         </p>
                       )}
