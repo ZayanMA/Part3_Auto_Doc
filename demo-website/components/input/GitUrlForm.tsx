@@ -53,8 +53,8 @@ export default function GitUrlForm() {
           onClick={() => {
             setUrl('https://github.com/microsoft/markitdown')
             setMode('patch')
-            setBase('HEAD~1')
-            setHead('HEAD')
+            setBase('1736565')
+            setHead('8a9d8f1')
           }}
           className="mt-1.5 text-xs text-blue-600 hover:underline"
         >

@@ -198,26 +198,29 @@ export default function DemoPage() {
           <div className="max-w-4xl mx-auto">
             <div className="text-center mb-10">
               <h2 className="text-3xl font-bold text-gray-900">How It Works</h2>
+              <p className="text-gray-500 mt-2">AutoDoc fits into your existing workflow with minimal setup</p>
             </div>
+
+            {/* Three value cards */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               {[
                 {
-                  title: 'Backend Engine',
-                  icon: '⚙️',
-                  desc: 'Python FastAPI server clones the repo, groups files into logical units via import graph analysis, and calls an LLM (via OpenRouter) to generate documentation per unit.',
-                  tags: ['Python', 'FastAPI', 'OpenRouter'],
-                },
-                {
-                  title: 'GitHub Actions',
+                  title: 'Triggered by your CI',
                   icon: '🔁',
-                  desc: 'A reusable workflow triggers on PR merge, calls the backend, polls for completion, HMAC-signs the result, and pushes it to the Forge webhook.',
-                  tags: ['GitHub Actions', 'HMAC', 'Webhook'],
+                  desc: 'Add one line to your GitHub Actions workflow. Every time a PR is merged, AutoDoc runs automatically — or trigger it manually from this demo.',
+                  tags: ['GitHub Actions', 'Zero config', 'Always up to date'],
                 },
                 {
-                  title: 'Atlassian Forge',
-                  icon: '🧩',
-                  desc: 'A Forge app receives docs, stores them in KVS as pending, shows a review panel in Jira, and publishes approved docs to Confluence page hierarchy.',
-                  tags: ['Forge', 'Jira', 'Confluence'],
+                  title: 'Understands your codebase',
+                  icon: '🧠',
+                  desc: 'AutoDoc groups related files into logical documentation units based on how they import each other, then writes structured docs per unit using an LLM. Unchanged units are cached and skipped.',
+                  tags: ['Smart grouping', 'LLM-powered', 'Cached'],
+                },
+                {
+                  title: 'Human review, then publish',
+                  icon: '✅',
+                  desc: 'Generated docs appear in a Jira panel for your team to review before anything is published. Approve a doc and it goes straight to Confluence. Patch runs show only what changed.',
+                  tags: ['Jira', 'Confluence', 'Diff view'],
                 },
               ].map((card) => (
                 <div key={card.title} className="border border-gray-200 rounded-xl p-6 hover:shadow-md transition-shadow">
@@ -233,28 +236,27 @@ export default function DemoPage() {
               ))}
             </div>
 
-            {/* Flow diagram */}
-            <div className="mt-12 bg-gray-50 rounded-xl p-6">
-              <h3 className="text-center font-semibold text-gray-700 mb-6">End-to-End Flow</h3>
-              <div className="flex flex-wrap items-center justify-center gap-2 text-sm">
+            {/* Numbered steps */}
+            <div className="mt-12 bg-gray-50 rounded-xl p-8">
+              <h3 className="text-center font-semibold text-gray-700 mb-8">Step by step</h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {[
-                  'PR Merged',
-                  'GitHub Actions',
-                  'POST /generate',
-                  'LLM generates docs',
-                  'Poll /jobs/{id}',
-                  'HMAC sign',
-                  'POST webhook',
-                  'Jira panel',
-                  'Reviewer approves',
-                  'Published to Confluence',
-                ].map((step, i, arr) => (
-                  <span key={i} className="flex items-center gap-2">
-                    <span className="bg-white border border-gray-200 rounded-lg px-3 py-1.5 font-medium text-gray-700 shadow-sm">
-                      {step}
+                  { n: 1, title: 'PR merged',          desc: 'Your CI triggers AutoDoc automatically on every merge.' },
+                  { n: 2, title: 'Repo cloned',        desc: 'The backend fetches your code and identifies what changed.' },
+                  { n: 3, title: 'Smart grouping',     desc: 'Related files are clustered into logical units by how they depend on each other.' },
+                  { n: 4, title: 'LLM writes docs',    desc: 'One focused documentation page is generated per unit. Unchanged units are skipped.' },
+                  { n: 5, title: 'Jira review panel',  desc: 'Your team sees the new docs — and any diffs — inside the Jira issue for that PR.' },
+                  { n: 6, title: 'Published',          desc: 'Approved docs are pushed to Confluence automatically, organised by kind.' },
+                ].map(({ n, title, desc }) => (
+                  <div key={n} className="flex gap-4 items-start bg-white rounded-lg border border-gray-200 px-4 py-3">
+                    <span className="flex-shrink-0 w-7 h-7 rounded-full bg-blue-600 text-white text-sm font-bold flex items-center justify-center">
+                      {n}
                     </span>
-                    {i < arr.length - 1 && <span className="text-gray-400">→</span>}
-                  </span>
+                    <div>
+                      <p className="font-semibold text-gray-800 text-sm">{title}</p>
+                      <p className="text-xs text-gray-500 mt-0.5">{desc}</p>
+                    </div>
+                  </div>
                 ))}
               </div>
             </div>
