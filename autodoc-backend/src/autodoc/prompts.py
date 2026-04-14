@@ -111,12 +111,14 @@ def build_unit_patch_prompt(bundle) -> str:
     symbols = getattr(bundle, "changed_symbols", []) or []
     symbol_text = ", ".join(f"`{s}`" for s in symbols) if symbols else "(could not extract)"
 
-    # Scored doc sections: only the most-relevant sections, not the full dump
+    # Always use the full existing doc so the LLM can copy unaffected sections verbatim.
+    # Scored sections are surfaced separately as focus hints only.
+    existing_doc_text = (getattr(bundle, "existing_unit_doc", "") or "").strip() or "(none yet)"
     scored_sections = getattr(bundle, "scored_doc_sections", []) or []
+    focus_hint = ""
     if scored_sections:
-        existing_doc_text = "\n\n".join(f"## {h}\n{b}" for h, b in scored_sections)
-    else:
-        existing_doc_text = (getattr(bundle, "existing_unit_doc", "") or "").strip() or "(none yet)"
+        affected = ", ".join(f"`{h}`" for h, _ in scored_sections)
+        focus_hint = f"\n## Sections Most Likely Affected by This Diff\n{affected}\n"
 
     # Changed files at HEAD: full content for the files that actually changed
     changed_paths = {p for p, _ in diffs}
@@ -150,15 +152,15 @@ def build_unit_patch_prompt(bundle) -> str:
 
 ## Related Units (cross-unit impact)
 {neighbours_text}
-
-## Relevant Documentation Sections (scored against changed symbols)
+{focus_hint}
+## Existing Documentation (full — copy unaffected sections verbatim)
 {existing_doc_text}
 
 ## Instructions
 - Return the COMPLETE updated Markdown document with ALL required sections:
   ## Overview / ## Responsibilities / ## Key APIs & Interfaces / ## Configuration & Data / ## Dependencies / ## Usage Notes
 - Update ONLY sections directly affected by the diff above.
-- Copy all unaffected sections verbatim from existing documentation.
+- If a section is not affected by the diff, output it EXACTLY as it appears in the existing documentation above — do not rephrase, reorder, reformat, or restructure it.
 - Preserve clean Markdown structure with blank lines between headings, paragraphs, lists, and code blocks.
 - Keep sections concise and scannable; prefer bullets to long paragraphs.
 - In `## Key APIs & Interfaces`, present each changed API or interface as a separate bullet with a short explanation and file citation.
