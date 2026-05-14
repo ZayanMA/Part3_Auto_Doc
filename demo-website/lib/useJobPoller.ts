@@ -4,7 +4,8 @@ import { JobEvent } from './types'
 import { getJob } from './api'
 
 const POLL_INTERVAL_MS = 2000
-const TIMEOUT_MS = 20 * 60 * 1000 // 20 minutes
+const TIMEOUT_MINUTES = 60
+const TIMEOUT_MS = TIMEOUT_MINUTES * 60 * 1000
 
 export function useJobPoller(
   jobId: string | null,
@@ -34,7 +35,7 @@ export function useJobPoller(
       if (Date.now() - startTimeRef.current > TIMEOUT_MS) {
         clearInterval(intervalRef.current!)
         intervalRef.current = null
-        onEvent({ event: 'job_failed', job_id: jobId, error: 'Job timed out after 20 minutes' })
+        onEvent({ event: 'job_failed', job_id: jobId, error: `Job timed out after ${TIMEOUT_MINUTES} minutes` })
         return
       }
 
